@@ -1,69 +1,67 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../storage/token_storage.dart';
 
 class ApiClient {
-  ApiClient({
-    http.Client? client,
-    TokenStorage? tokenStorage,
-  })  : _client = client ?? http.Client(),
-        _tokenStorage = tokenStorage ?? TokenStorage();
+  ApiClient({http.Client? client, TokenStorage? tokenStorage})
+    : _client = client ?? http.Client(),
+      _tokenStorage = tokenStorage ?? TokenStorage();
 
-  static const String baseUrl = 'http://192.168.0.16:3000';
+  static const String baseUrl = String.fromEnvironment(
+    'JETKIZ_API_BASE_URL',
+    defaultValue: 'http://127.0.0.1:3000',
+  );
+
   static const Duration _timeout = Duration(seconds: 15);
+
+  static const String _app = 'courier';
+  static const String _locale = 'ru';
+  static const String _timezone = 'Asia/Almaty';
+  static const String _deviceIdKey = 'jetkiz_device_id';
+
+  static final StreamController<void> _sessionExpiredController =
+      StreamController<void>.broadcast();
+  static Future<_RefreshResult>? _refreshInFlight;
+
+  static Stream<void> get sessionExpired => _sessionExpiredController.stream;
 
   final http.Client _client;
   final TokenStorage _tokenStorage;
+  final Uuid _uuid = const Uuid();
 
   Future<dynamic> get(String path) async {
-    final response = await _send(
-      method: 'GET',
-      path: path,
-    );
+    final response = await _send(method: 'GET', path: path);
 
     return _handleResponse(response);
   }
 
-  Future<dynamic> post(
-    String path, [
-    Map<String, dynamic>? body,
-  ]) async {
-    final response = await _send(
-      method: 'POST',
-      path: path,
-      body: body,
-    );
+  Future<dynamic> post(String path, [Map<String, dynamic>? body]) async {
+    final response = await _send(method: 'POST', path: path, body: body);
 
     return _handleResponse(response);
   }
 
-  Future<dynamic> patch(
-    String path, [
-    Map<String, dynamic>? body,
-  ]) async {
-    final response = await _send(
-      method: 'PATCH',
-      path: path,
-      body: body,
-    );
+  Future<dynamic> patch(String path, [Map<String, dynamic>? body]) async {
+    final response = await _send(method: 'PATCH', path: path, body: body);
 
     return _handleResponse(response);
   }
 
-  Future<dynamic> delete(
-    String path, [
-    Map<String, dynamic>? body,
-  ]) async {
-    final response = await _send(
-      method: 'DELETE',
-      path: path,
-      body: body,
-    );
+  Future<dynamic> delete(String path, [Map<String, dynamic>? body]) async {
+    final response = await _send(method: 'DELETE', path: path, body: body);
 
     return _handleResponse(response);
+  }
+
+  Future<String> getDeviceId() {
+    return _getDeviceId();
   }
 
   Future<http.Response> _send({
@@ -73,23 +71,14 @@ class ApiClient {
     bool retryAfterRefresh = true,
   }) async {
     final uri = Uri.parse('$baseUrl$path');
-    final accessToken = await _tokenStorage.getAccessToken();
-
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      if (accessToken != null && accessToken.isNotEmpty)
-        'Authorization': 'Bearer $accessToken',
-    };
+    final headers = await _buildHeaders(includeAuth: true);
 
     http.Response response;
 
     try {
       switch (method) {
         case 'GET':
-          response = await _client
-              .get(uri, headers: headers)
-              .timeout(_timeout);
+          response = await _client.get(uri, headers: headers).timeout(_timeout);
           break;
 
         case 'POST':
@@ -126,17 +115,33 @@ class ApiClient {
           throw Exception('Unsupported method: $method');
       }
     } on TimeoutException {
-      throw Exception('Request timeout: $method $path');
+      throw ApiException.timeout(method: method, path: path);
+    } on SocketException catch (e) {
+      throw ApiException.network(
+        method: method,
+        path: path,
+        message: e.message,
+      );
     } on http.ClientException catch (e) {
-      throw Exception('Network error: ${e.message}');
+      throw ApiException.network(
+        method: method,
+        path: path,
+        message: e.message,
+      );
+    } on ApiException {
+      rethrow;
     } catch (e) {
-      throw Exception('Request failed: $e');
+      throw ApiException.request(
+        method: method,
+        path: path,
+        message: e.toString(),
+      );
     }
 
     if (response.statusCode == 401 && retryAfterRefresh) {
-      final refreshed = await _tryRefreshToken();
+      final refreshResult = await _refreshTokenOnce();
 
-      if (refreshed) {
+      if (refreshResult.isSuccess) {
         return _send(
           method: method,
           path: path,
@@ -145,43 +150,124 @@ class ApiClient {
         );
       }
 
+      if (refreshResult.isInvalidSession) {
+        await _tokenStorage.clear();
+        _sessionExpiredController.add(null);
+        throw ApiException.sessionExpired(method: method, path: path);
+      }
+
+      throw refreshResult.error ??
+          ApiException.server(
+            method: 'POST',
+            path: '/auth/refresh',
+            message: 'Token refresh failed temporarily',
+          );
+    }
+
+    if (response.statusCode == 401 && !retryAfterRefresh) {
       await _tokenStorage.clear();
+      _sessionExpiredController.add(null);
+      throw ApiException.sessionExpired(method: method, path: path);
     }
 
     return response;
   }
 
-  Future<bool> _tryRefreshToken() async {
+  Future<Map<String, String>> _buildHeaders({required bool includeAuth}) async {
+    final accessToken = includeAuth
+        ? await _tokenStorage.getAccessToken()
+        : null;
+    final deviceId = await _getDeviceId();
+    final appVersion = await _getAppVersion();
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Request-Id': _buildRequestId(),
+      'X-App': _app,
+      'X-Platform': _platform(),
+      'X-App-Version': appVersion,
+      'X-Device-Id': deviceId,
+      'X-Locale': _locale,
+      'X-Timezone': _timezone,
+      'User-Agent': 'JetkizCourier/$appVersion',
+    };
+
+    if (accessToken != null && accessToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $accessToken';
+    }
+
+    return headers;
+  }
+
+  Future<_RefreshResult> _refreshTokenOnce() async {
+    final existing = _refreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = _tryRefreshToken();
+    _refreshInFlight = future;
+
+    try {
+      return await future;
+    } finally {
+      if (identical(_refreshInFlight, future)) {
+        _refreshInFlight = null;
+      }
+    }
+  }
+
+  Future<_RefreshResult> _tryRefreshToken() async {
     final refreshToken = await _tokenStorage.getRefreshToken();
 
     if (refreshToken == null || refreshToken.isEmpty) {
-      return false;
+      return const _RefreshResult.invalidSession();
     }
 
     final uri = Uri.parse('$baseUrl/auth/refresh');
+    final headers = await _buildHeaders(includeAuth: false);
+
+    headers['x-skip-auth-refresh'] = 'true';
 
     try {
       final response = await _client
           .post(
             uri,
-            headers: const {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({
-              'refreshToken': refreshToken,
-            }),
+            headers: headers,
+            body: jsonEncode({'refreshToken': refreshToken}),
           )
           .timeout(_timeout);
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return false;
+      if (response.statusCode == 400 ||
+          response.statusCode == 401 ||
+          response.statusCode == 403) {
+        return const _RefreshResult.invalidSession();
       }
 
-      final decoded = jsonDecode(response.body);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return _RefreshResult.transientFailure(
+          ApiException.fromResponse(
+            method: 'POST',
+            path: '/auth/refresh',
+            response: response,
+          ),
+        );
+      }
+
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } catch (_) {
+        return _RefreshResult.transientFailure(
+          ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
+        );
+      }
 
       if (decoded is! Map<String, dynamic>) {
-        return false;
+        return _RefreshResult.transientFailure(
+          ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
+        );
       }
 
       final newAccessToken = decoded['accessToken']?.toString();
@@ -189,17 +275,42 @@ class ApiClient {
           decoded['refreshToken']?.toString() ?? refreshToken;
 
       if (newAccessToken == null || newAccessToken.isEmpty) {
-        return false;
+        return _RefreshResult.transientFailure(
+          ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
+        );
       }
 
-      await _tokenStorage.saveTokens(
-        newAccessToken,
-        newRefreshToken,
-      );
+      await _tokenStorage.saveTokens(newAccessToken, newRefreshToken);
 
-      return true;
-    } catch (_) {
-      return false;
+      return const _RefreshResult.success();
+    } on TimeoutException {
+      return _RefreshResult.transientFailure(
+        ApiException.timeout(method: 'POST', path: '/auth/refresh'),
+      );
+    } on SocketException catch (e) {
+      return _RefreshResult.transientFailure(
+        ApiException.network(
+          method: 'POST',
+          path: '/auth/refresh',
+          message: e.message,
+        ),
+      );
+    } on http.ClientException catch (e) {
+      return _RefreshResult.transientFailure(
+        ApiException.network(
+          method: 'POST',
+          path: '/auth/refresh',
+          message: e.message,
+        ),
+      );
+    } catch (e) {
+      return _RefreshResult.transientFailure(
+        ApiException.request(
+          method: 'POST',
+          path: '/auth/refresh',
+          message: e.toString(),
+        ),
+      );
     }
   }
 
@@ -208,8 +319,10 @@ class ApiClient {
     final bodyText = response.body.trim();
 
     if (status < 200 || status >= 300) {
-      throw Exception(
-        'HTTP $status: ${bodyText.isEmpty ? '<empty body>' : bodyText}',
+      throw ApiException.fromResponse(
+        method: 'HTTP',
+        path: response.request?.url.path ?? '',
+        response: response,
       );
     }
 
@@ -224,7 +337,219 @@ class ApiClient {
     }
   }
 
+  Future<String> _getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_deviceIdKey);
+
+    if (existing != null && existing.trim().isNotEmpty) {
+      return existing;
+    }
+
+    final generated = 'jetkiz-courier-${_uuid.v4()}';
+    await prefs.setString(_deviceIdKey, generated);
+
+    return generated;
+  }
+
+  Future<String> _getAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+
+      final version = info.version.trim();
+      final buildNumber = info.buildNumber.trim();
+
+      if (version.isEmpty && buildNumber.isEmpty) {
+        return '1.0.0';
+      }
+
+      if (buildNumber.isEmpty) {
+        return version;
+      }
+
+      return '$version+$buildNumber';
+    } catch (_) {
+      return '1.0.0';
+    }
+  }
+
+  String _buildRequestId() {
+    final now = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    final random = _uuid.v4().replaceAll('-', '').substring(0, 16);
+
+    return 'req-$now-$random';
+  }
+
+  String _platform() {
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isIOS) return 'ios';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isLinux) return 'linux';
+
+    return 'unknown';
+  }
+
   void dispose() {
     _client.close();
   }
+}
+
+enum ApiErrorKind {
+  network,
+  timeout,
+  server,
+  unauthorized,
+  forbidden,
+  sessionExpired,
+  invalidResponse,
+  request,
+}
+
+class ApiException implements Exception {
+  const ApiException({
+    required this.kind,
+    required this.method,
+    required this.path,
+    required this.message,
+    this.statusCode,
+  });
+
+  final ApiErrorKind kind;
+  final String method;
+  final String path;
+  final String message;
+  final int? statusCode;
+
+  bool get isAuthenticationFailure =>
+      kind == ApiErrorKind.unauthorized ||
+      kind == ApiErrorKind.forbidden ||
+      kind == ApiErrorKind.sessionExpired;
+
+  bool get isTransient =>
+      kind == ApiErrorKind.network ||
+      kind == ApiErrorKind.timeout ||
+      kind == ApiErrorKind.server ||
+      kind == ApiErrorKind.invalidResponse ||
+      kind == ApiErrorKind.request;
+
+  factory ApiException.fromResponse({
+    required String method,
+    required String path,
+    required http.Response response,
+  }) {
+    final status = response.statusCode;
+    final body = response.body.trim();
+    final kind = status == 401
+        ? ApiErrorKind.unauthorized
+        : status == 403
+        ? ApiErrorKind.forbidden
+        : status >= 500
+        ? ApiErrorKind.server
+        : ApiErrorKind.request;
+
+    return ApiException(
+      kind: kind,
+      method: method,
+      path: path,
+      statusCode: status,
+      message: 'HTTP $status: ${body.isEmpty ? '<empty body>' : body}',
+    );
+  }
+
+  factory ApiException.network({
+    required String method,
+    required String path,
+    required String message,
+  }) {
+    return ApiException(
+      kind: ApiErrorKind.network,
+      method: method,
+      path: path,
+      message: 'Network error: $message',
+    );
+  }
+
+  factory ApiException.timeout({required String method, required String path}) {
+    return ApiException(
+      kind: ApiErrorKind.timeout,
+      method: method,
+      path: path,
+      message: 'Request timeout: $method $path',
+    );
+  }
+
+  factory ApiException.server({
+    required String method,
+    required String path,
+    required String message,
+  }) {
+    return ApiException(
+      kind: ApiErrorKind.server,
+      method: method,
+      path: path,
+      message: message,
+    );
+  }
+
+  factory ApiException.sessionExpired({
+    required String method,
+    required String path,
+  }) {
+    return ApiException(
+      kind: ApiErrorKind.sessionExpired,
+      method: method,
+      path: path,
+      statusCode: 401,
+      message: 'Session expired',
+    );
+  }
+
+  factory ApiException.invalidResponse({
+    required String method,
+    required String path,
+  }) {
+    return ApiException(
+      kind: ApiErrorKind.invalidResponse,
+      method: method,
+      path: path,
+      message: 'Server returned an invalid response',
+    );
+  }
+
+  factory ApiException.request({
+    required String method,
+    required String path,
+    required String message,
+  }) {
+    return ApiException(
+      kind: ApiErrorKind.request,
+      method: method,
+      path: path,
+      message: message,
+    );
+  }
+
+  @override
+  String toString() => message;
+}
+
+class _RefreshResult {
+  const _RefreshResult._({
+    required this.isSuccess,
+    required this.isInvalidSession,
+    this.error,
+  });
+
+  const _RefreshResult.success()
+    : this._(isSuccess: true, isInvalidSession: false);
+
+  const _RefreshResult.invalidSession()
+    : this._(isSuccess: false, isInvalidSession: true);
+
+  const _RefreshResult.transientFailure(ApiException error)
+    : this._(isSuccess: false, isInvalidSession: false, error: error);
+
+  final bool isSuccess;
+  final bool isInvalidSession;
+  final ApiException? error;
 }

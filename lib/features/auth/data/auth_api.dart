@@ -4,14 +4,14 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class AuthApi {
-  AuthApi({
-    http.Client? client,
-  }) : _client = client ?? http.Client();
+  AuthApi({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
 
-  // Если backend у тебя реально запущен на 3001, просто поменяй порт здесь.
-  static const String baseUrl = 'http://192.168.0.16:3000';
+  static const String baseUrl = String.fromEnvironment(
+    'JETKIZ_API_BASE_URL',
+    defaultValue: 'http://127.0.0.1:3000',
+  );
   static const Duration _timeout = Duration(seconds: 15);
 
   Future<void> requestCode(String phone) async {
@@ -23,9 +23,7 @@ class AuthApi {
 
     final response = await _post(
       '/auth/request-code',
-      body: {
-        'phone': normalizedPhone,
-      },
+      body: {'phone': normalizedPhone},
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -52,10 +50,7 @@ class AuthApi {
 
     final response = await _post(
       '/auth/verify-code',
-      body: {
-        'phone': normalizedPhone,
-        'code': normalizedCode,
-      },
+      body: {'phone': normalizedPhone, 'code': normalizedCode},
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -86,6 +81,7 @@ class AuthApi {
             headers: const {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+              'X-App': 'courier',
             },
             body: jsonEncode(body),
           )
