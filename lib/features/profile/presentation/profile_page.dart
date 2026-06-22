@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:jetkiz_courier_app/core/auth/logout_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
-import 'package:jetkiz_courier_app/features/auth/presentation/login_page.dart';
+import 'package:jetkiz_courier_app/core/storage/token_storage.dart';
+import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
 import 'package:jetkiz_courier_app/features/home/home_page.dart';
 import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
@@ -21,8 +23,9 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   late final _CourierProfileApi _api;
+  late final LogoutService _logoutService;
+
   final ImagePicker _imagePicker = ImagePicker();
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   bool _loading = true;
   bool _uploadingPhoto = false;
@@ -38,8 +41,17 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
+
     _api = _CourierProfileApi(ApiClient());
+    _logoutService = LogoutService();
+
     _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_logoutService.dispose());
+    super.dispose();
   }
 
   Future<void> _loadProfile() async {
@@ -104,6 +116,9 @@ class _ProfilePageState extends State<ProfilePage> {
       });
 
       _showSnackBar('Фото обновлено');
+    } on _AvatarFormatException catch (e) {
+      if (!mounted) return;
+      _showSnackBar(e.message);
     } catch (_) {
       if (!mounted) return;
       _showSnackBar('Не удалось загрузить фото');
@@ -123,14 +138,18 @@ class _ProfilePageState extends State<ProfilePage> {
     });
 
     try {
-      await _secureStorage.deleteAll();
+      try {
+        await _api.setOnline(false);
+      } catch (_) {
+        // Выход не должен блокироваться из-за ошибки смены online-статуса.
+      }
+
+      await _logoutService.logout();
 
       if (!mounted) return;
 
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => const LoginPage(),
-        ),
+        MaterialPageRoute(builder: (_) => const AuthGate()),
         (route) => false,
       );
     } catch (_) {
@@ -156,29 +175,23 @@ class _ProfilePageState extends State<ProfilePage> {
     if (index == 3) return;
 
     if (index == 0) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const HomePage(),
-        ),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
       return;
     }
 
     if (index == 1) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const OrdersPage(),
-        ),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const OrdersPage()));
       return;
     }
 
     if (index == 2) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const FinancePage(),
-        ),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const FinancePage()));
       return;
     }
   }
@@ -186,9 +199,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void _showSnackBar(String text) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(content: Text(text)),
-    );
+    messenger?.showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
@@ -204,95 +215,88 @@ class _ProfilePageState extends State<ProfilePage> {
       body: SafeArea(
         child: _loading
             ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFF489F2A),
-                ),
+                child: CircularProgressIndicator(color: Color(0xFF489F2A)),
               )
             : _error != null
-                ? _ErrorState(
-                    message: _error!,
-                    onRetry: _loadProfile,
-                  )
-                : RefreshIndicator(
-                    color: const Color(0xFF489F2A),
-                    onRefresh: _loadProfile,
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-                      children: [
-                        const Text(
-                          'Профиль',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        _ProfileHeaderCard(
-                          fullName: _fullName,
-                          avatarUrl: _avatarUrl,
-                          isOnline: _isOnline,
-                          uploadingPhoto: _uploadingPhoto,
-                          onPhotoTap: _pickAndUploadPhoto,
-                        ),
-                        const SizedBox(height: 14),
-                        _StatCard(
-                          title: 'Количество заказов',
-                          value: '$_ordersCount',
-                          icon: Icons.receipt_long_rounded,
-                        ),
-                        const SizedBox(height: 14),
-                        _StatusCard(
-                          isOnline: _isOnline,
-                        ),
-                        const SizedBox(height: 14),
-                        _MenuTile(
-                          title: 'Документы',
-                          icon: Icons.description_outlined,
-                          onTap: _showDocuments,
-                        ),
-                        const SizedBox(height: 10),
-                        _MenuTile(
-                          title: 'Помощь',
-                          icon: Icons.help_outline_rounded,
-                          onTap: _showHelp,
-                        ),
-                        const SizedBox(height: 22),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: _loggingOut ? null : _logout,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF111827),
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: const Color(0xFF374151),
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              elevation: 0,
-                            ),
-                            child: _loggingOut
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Выйти',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ],
+            ? _ErrorState(message: _error!, onRetry: _loadProfile)
+            : RefreshIndicator(
+                color: const Color(0xFF489F2A),
+                onRefresh: _loadProfile,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                  children: [
+                    const Text(
+                      'Профиль',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 18),
+                    _ProfileHeaderCard(
+                      fullName: _fullName,
+                      avatarUrl: _avatarUrl,
+                      isOnline: _isOnline,
+                      uploadingPhoto: _uploadingPhoto,
+                      onPhotoTap: _pickAndUploadPhoto,
+                    ),
+                    const SizedBox(height: 14),
+                    _StatCard(
+                      title: 'Количество заказов',
+                      value: '$_ordersCount',
+                      icon: Icons.receipt_long_rounded,
+                    ),
+                    const SizedBox(height: 14),
+                    _StatusCard(isOnline: _isOnline),
+                    const SizedBox(height: 14),
+                    _MenuTile(
+                      title: 'Документы',
+                      icon: Icons.description_outlined,
+                      onTap: _showDocuments,
+                    ),
+                    const SizedBox(height: 10),
+                    _MenuTile(
+                      title: 'Помощь',
+                      icon: Icons.help_outline_rounded,
+                      onTap: _showHelp,
+                    ),
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _loggingOut ? null : _logout,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF111827),
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: const Color(0xFF374151),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: _loggingOut
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Выйти',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -335,8 +339,8 @@ class _ProfileHeaderCard extends StatelessWidget {
                   backgroundColor: const Color(0xFFE5E7EB),
                   backgroundImage:
                       avatarUrl != null && avatarUrl!.trim().isNotEmpty
-                          ? NetworkImage(avatarUrl!)
-                          : null,
+                      ? NetworkImage(avatarUrl!)
+                      : null,
                   child: avatarUrl == null || avatarUrl!.trim().isEmpty
                       ? const Icon(
                           Icons.person_rounded,
@@ -456,10 +460,7 @@ class _StatCard extends StatelessWidget {
               color: const Color(0xFF489F2A).withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF489F2A),
-            ),
+            child: Icon(icon, color: const Color(0xFF489F2A)),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -487,9 +488,7 @@ class _StatCard extends StatelessWidget {
 }
 
 class _StatusCard extends StatelessWidget {
-  const _StatusCard({
-    required this.isOnline,
-  });
+  const _StatusCard({required this.isOnline});
 
   final bool isOnline;
 
@@ -508,10 +507,9 @@ class _StatusCard extends StatelessWidget {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: (isOnline
-                      ? const Color(0xFF12B76A)
-                      : const Color(0xFF98A2B3))
-                  .withValues(alpha: 0.12),
+              color:
+                  (isOnline ? const Color(0xFF12B76A) : const Color(0xFF98A2B3))
+                      .withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
@@ -582,10 +580,7 @@ class _MenuTile extends StatelessWidget {
                   color: const Color(0xFF489F2A).withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  icon,
-                  color: const Color(0xFF489F2A),
-                ),
+                child: Icon(icon, color: const Color(0xFF489F2A)),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -598,10 +593,7 @@ class _MenuTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF98A2B3),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF98A2B3)),
             ],
           ),
         ),
@@ -611,10 +603,7 @@ class _MenuTile extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({
-    required this.message,
-    required this.onRetry,
-  });
+  const _ErrorState({required this.message, required this.onRetry});
 
   final String message;
   final Future<void> Function() onRetry;
@@ -659,10 +648,11 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _CourierProfileApi {
-  const _CourierProfileApi(this._client);
+  _CourierProfileApi(this._client, {TokenStorage? tokenStorage})
+    : _tokenStorage = tokenStorage ?? TokenStorage();
 
   final ApiClient _client;
-  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+  final TokenStorage _tokenStorage;
 
   Future<_CourierMe> getMe() async {
     final dynamic response = await _client.get('/couriers/me');
@@ -716,10 +706,9 @@ class _CourierProfileApi {
   }
 
   Future<String?> uploadAvatar(File file) async {
-    final accessToken =
-        await _secureStorage.read(key: 'accessToken') ??
-        await _secureStorage.read(key: 'access_token') ??
-        await _secureStorage.read(key: 'token');
+    final contentType = _avatarContentType(file.path);
+
+    final accessToken = await _tokenStorage.getAccessToken();
 
     if (accessToken == null || accessToken.trim().isEmpty) {
       throw Exception('Нет access token');
@@ -736,6 +725,7 @@ class _CourierProfileApi {
         filename: file.uri.pathSegments.isNotEmpty
             ? file.uri.pathSegments.last
             : 'avatar.jpg',
+        contentType: contentType,
       ),
     );
 
@@ -751,9 +741,37 @@ class _CourierProfileApi {
     final decoded = jsonDecode(response.body);
     final json = _asMap(decoded);
 
-    return _normalizeImageUrl(
-      _readNullableString(json, const ['avatarUrl']),
-    );
+    return _normalizeImageUrl(_readNullableString(json, const ['avatarUrl']));
+  }
+
+  static http.MediaType _avatarContentType(String path) {
+    final normalized = path.trim().toLowerCase();
+    final dotIndex = normalized.lastIndexOf('.');
+    final extension = dotIndex >= 0 ? normalized.substring(dotIndex) : '';
+
+    switch (extension) {
+      case '.jpg':
+      case '.jpeg':
+        return http.MediaType('image', 'jpeg');
+      case '.png':
+        return http.MediaType('image', 'png');
+      case '.webp':
+        return http.MediaType('image', 'webp');
+      case '.heic':
+      case '.heif':
+        throw const _AvatarFormatException(
+          'Этот формат фото не поддерживается. Выберите JPG, PNG или WEBP.',
+        );
+      default:
+        throw const _AvatarFormatException('Неподдерживаемый формат файла.');
+    }
+  }
+
+  Future<void> setOnline(bool value) async {
+    await _client.patch('/couriers/me/online', {
+      'isOnline': value,
+      'source': 'mobile',
+    });
   }
 
   static Map<String, dynamic> _asMap(dynamic value) {
@@ -920,4 +938,10 @@ class _CourierMe {
   final String? avatarUrl;
   final bool isOnline;
   final int ordersCount;
+}
+
+class _AvatarFormatException implements Exception {
+  const _AvatarFormatException(this.message);
+
+  final String message;
 }
