@@ -6,26 +6,62 @@ class AuthRepository {
 
   final AuthApi _api;
 
-  Future<void> requestCode(String phone) {
-    return _api.requestCode(phone);
-  }
-
-  Future<AuthSession> verifyCode(String phone, String code) async {
-    final result = await _api.verifyCode(
+  Future<CourierLoginResult> loginCourier(
+    String phone,
+    String password,
+  ) async {
+    final result = await _api.loginCourier(
       phone: phone,
-      code: code,
+      password: password,
     );
 
-    final accessToken = (result['accessToken'] ?? '').toString();
-    final refreshToken = (result['refreshToken'] ?? '').toString();
+    final passwordChangeRequired = result['passwordChangeRequired'] == true;
+
+    if (passwordChangeRequired) {
+      final normalizedPhone = (result['phone'] ?? phone).toString().trim();
+      final expiresAtRaw = result['temporaryPasswordExpiresAt']?.toString();
+
+      return CourierLoginResult.passwordChangeRequired(
+        phone: normalizedPhone,
+        temporaryPasswordExpiresAt:
+            expiresAtRaw == null ? null : DateTime.tryParse(expiresAtRaw),
+      );
+    }
+
+    return CourierLoginResult.authenticated(
+      session: _parseSession(result),
+    );
+  }
+
+  Future<AuthSession> changeTemporaryPassword({
+    required String phone,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final result = await _api.changeTemporaryPassword(
+      phone: phone,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+
+    return _parseSession(result);
+  }
+
+  AuthSession _parseSession(Map<String, dynamic> result) {
+    final accessToken = (result['accessToken'] ?? '').toString().trim();
+    final refreshToken = (result['refreshToken'] ?? '').toString().trim();
 
     if (accessToken.isEmpty || refreshToken.isEmpty) {
-      throw Exception('Tokens not found in verify response');
+      throw const FormatException('Auth tokens are missing in server response');
     }
 
     return AuthSession(
       accessToken: accessToken,
       refreshToken: refreshToken,
     );
+  }
+
+  void dispose() {
+    _api.dispose();
   }
 }
