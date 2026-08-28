@@ -12,29 +12,18 @@ class CourierOrderCompactCard extends StatelessWidget {
 
   final CourierOrderItem order;
   final VoidCallback? onTap;
+
+  // Kept temporarily for source compatibility with OrdersPage. Status changes
+  // are intentionally not exposed from this compact card: courier must open
+  // order details and confirm pickup/delivery there.
   final Future<void> Function()? onPrimaryAction;
   final bool isPrimaryActionLoading;
-
-  String? get _primaryActionLabel {
-    final status = order.status.toUpperCase();
-
-    if (status == 'READY') {
-      return 'Забрал заказ';
-    }
-
-    if (status == 'ON_THE_WAY') {
-      return 'Доставил';
-    }
-
-    return null;
-  }
 
   @override
   Widget build(BuildContext context) {
     final statusStyle = _statusStyle(order.status);
     final dateText = _formatDateTime(order.relevantDate);
     final payout = _formatMoney(order.courierNetAmount ?? 0);
-    final actionLabel = _primaryActionLabel;
 
     return Material(
       color: Colors.white,
@@ -125,39 +114,26 @@ class CourierOrderCompactCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (actionLabel != null) ...[
+              if (order.needsPickup || order.isOnTheWay) ...[
                 const SizedBox(height: 14),
-                SizedBox(
+                Container(
                   width: double.infinity,
-                  child: FilledButton(
-                    onPressed: (onPrimaryAction == null || isPrimaryActionLoading)
-                        ? null
-                        : () => onPrimaryAction!(),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF2F8731),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'Откройте заказ, чтобы изменить статус',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF475467),
                     ),
-                    child: isPrimaryActionLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : Text(
-                            actionLabel,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
                   ),
                 ),
               ],
@@ -179,75 +155,44 @@ class CourierOrderCompactCard extends StatelessWidget {
   static String _formatMoney(int value) {
     final s = value.toString();
     final buffer = StringBuffer();
-    int count = 0;
+    var count = 0;
 
-    for (int i = s.length - 1; i >= 0; i--) {
+    for (var i = s.length - 1; i >= 0; i--) {
       buffer.write(s[i]);
       count++;
-      if (count % 3 == 0 && i != 0) {
-        buffer.write(' ');
-      }
+      if (count % 3 == 0 && i != 0) buffer.write(' ');
     }
 
     return buffer.toString().split('').reversed.join();
   }
 
   static String _formatDateTime(DateTime value) {
-    final d = value.day.toString().padLeft(2, '0');
-    final m = value.month.toString().padLeft(2, '0');
-    final y = value.year.toString();
-    final h = value.hour.toString().padLeft(2, '0');
-    final min = value.minute.toString().padLeft(2, '0');
+    final local = value.toLocal();
+    final d = local.day.toString().padLeft(2, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    final y = local.year.toString();
+    final h = local.hour.toString().padLeft(2, '0');
+    final min = local.minute.toString().padLeft(2, '0');
     return '$d.$m.$y  $h:$min';
   }
 
   static _StatusStyle _statusStyle(String raw) {
-    final status = raw.toUpperCase();
-
-    switch (status) {
+    switch (raw.toUpperCase()) {
       case 'DELIVERED':
-        return const _StatusStyle(
-          label: 'Доставлен',
-          background: Color(0xFFEAF7EA),
-          foreground: Color(0xFF2F8731),
-        );
+        return const _StatusStyle('Доставлен', Color(0xFFEAF7EA), Color(0xFF2F8731));
       case 'ON_THE_WAY':
-        return const _StatusStyle(
-          label: 'В пути',
-          background: Color(0xFFEEF4FF),
-          foreground: Color(0xFF175CD3),
-        );
+        return const _StatusStyle('В пути', Color(0xFFEEF4FF), Color(0xFF175CD3));
       case 'READY':
-        return const _StatusStyle(
-          label: 'Готов',
-          background: Color(0xFFFFF4E5),
-          foreground: Color(0xFFB54708),
-        );
+        return const _StatusStyle('Готов', Color(0xFFFFF4E5), Color(0xFFB54708));
       case 'COOKING':
-        return const _StatusStyle(
-          label: 'Готовится',
-          background: Color(0xFFF2F4F7),
-          foreground: Color(0xFF344054),
-        );
+        return const _StatusStyle('Готовится', Color(0xFFF2F4F7), Color(0xFF344054));
       case 'ACCEPTED':
-        return const _StatusStyle(
-          label: 'Принят',
-          background: Color(0xFFF2F4F7),
-          foreground: Color(0xFF344054),
-        );
+        return const _StatusStyle('Принят', Color(0xFFF2F4F7), Color(0xFF344054));
       case 'CANCELED':
       case 'CANCELLED':
-        return const _StatusStyle(
-          label: 'Отменён',
-          background: Color(0xFFFDECEC),
-          foreground: Color(0xFFDC2626),
-        );
+        return const _StatusStyle('Отменён', Color(0xFFFDECEC), Color(0xFFDC2626));
       default:
-        return const _StatusStyle(
-          label: 'Статус',
-          background: Color(0xFFF2F4F7),
-          foreground: Color(0xFF667085),
-        );
+        return const _StatusStyle('Статус', Color(0xFFF2F4F7), Color(0xFF667085));
     }
   }
 }
@@ -268,11 +213,7 @@ class _InfoRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          icon,
-          size: 18,
-          color: const Color(0xFF667085),
-        ),
+        Icon(icon, size: 18, color: const Color(0xFF667085)),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -355,11 +296,7 @@ class _BottomMetric extends StatelessWidget {
 }
 
 class _StatusStyle {
-  const _StatusStyle({
-    required this.label,
-    required this.background,
-    required this.foreground,
-  });
+  const _StatusStyle(this.label, this.background, this.foreground);
 
   final String label;
   final Color background;
