@@ -44,7 +44,7 @@ class CourierOrdersApi {
     required int limit,
     String? status,
   }) async {
-    final requested = limit.clamp(1, 1000);
+    final requested = limit.clamp(1, 1000).toInt();
     final items = <CourierOrderItem>[];
     var currentPage = math.max(1, page);
 
@@ -78,6 +78,7 @@ class CourierOrdersApi {
     if (map.isEmpty) return null;
 
     final wrapped =
+        _readMap(map, const ['activeOrder']) ??
         _readMap(map, const ['item']) ??
         _readMap(map, const ['data']) ??
         map;
