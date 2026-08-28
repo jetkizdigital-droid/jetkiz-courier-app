@@ -61,7 +61,7 @@ class CourierOrderItem {
 
   bool get needsPickup {
     final s = status.toUpperCase();
-    return s == 'ACCEPTED' || s == 'COOKING' || s == 'READY';
+    return s == 'READY';
   }
 
   DateTime get relevantDate {

@@ -27,18 +27,25 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
   Timer? _timer;
 
   CourierOrderDetails? _order;
+
   bool _isLoading = true;
+  bool _isRefreshing = false;
   bool _isSubmitting = false;
+
   String _error = '';
   DateTime _now = DateTime.now();
 
   @override
   void initState() {
     super.initState();
+
     _api = CourierOrderDetailsApi(ApiClient());
+
     _load();
+
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
+
       setState(() {
         _now = DateTime.now();
       });
@@ -51,11 +58,23 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _error = '';
-    });
+  Future<void> _load({
+    bool silent = false,
+  }) async {
+    if (silent) {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = true;
+        });
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _error = '';
+        });
+      }
+    }
 
     try {
       final order = await _api.getOrderDetails(widget.orderId);
@@ -64,29 +83,40 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
       setState(() {
         _order = order;
+        _error = '';
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+
       setState(() {
-        _error = 'Не удалось загрузить детали заказа';
+        _error = _humanizeOrderError(e);
       });
     } finally {
       if (!mounted) return;
+
       setState(() {
         _isLoading = false;
+        _isRefreshing = false;
       });
     }
   }
 
   Future<void> _callPhone(String? phone) async {
     final raw = (phone ?? '').trim();
+
     if (raw.isEmpty) {
       _showSnackBar('Телефон не указан');
       return;
     }
 
-    final uri = Uri.parse('tel:$raw');
-    final ok = await launchUrl(uri);
+    final normalized = raw.replaceAll(RegExp(r'\s+'), '');
+    final uri = Uri.parse('tel:$normalized');
+
+    final ok = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
     if (!ok) {
       _showSnackBar('Не удалось открыть звонок');
     }
@@ -94,6 +124,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Future<void> _openTwoGis(String? address) async {
     final raw = (address ?? '').trim();
+
     if (raw.isEmpty) {
       _showSnackBar('Адрес не указан');
       return;
@@ -108,7 +139,25 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Future<void> _submitMainAction() async {
     final order = _order;
+
     if (order == null || _isSubmitting) return;
+
+    if (!order.canMarkPickedUp && !order.canMarkDelivered) {
+      _showSnackBar('Для этого статуса действие недоступно');
+      return;
+    }
+
+    if (order.canMarkDelivered) {
+      final confirmed = await _confirmDelivery();
+      if (!confirmed) return;
+    }
+
+    if (order.canMarkPickedUp) {
+      final confirmed = await _confirmPickup();
+      if (!confirmed) return;
+    }
+
+    if (!mounted) return;
 
     setState(() {
       _isSubmitting = true;
@@ -142,17 +191,78 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
       if (updated.isDelivered) {
         await Future<void>.delayed(const Duration(milliseconds: 350));
+
         if (!mounted) return;
+
         Navigator.of(context).pop(true);
       }
-    } catch (_) {
-      _showSnackBar('Не удалось обновить статус заказа');
+    } catch (e) {
+      final message = _humanizeOrderError(e);
+
+      _showSnackBar(message);
+
+      if (_isForbiddenOrNotFound(e)) {
+        await _load(silent: true);
+      }
     } finally {
       if (!mounted) return;
+
       setState(() {
         _isSubmitting = false;
       });
     }
+  }
+
+  Future<bool> _confirmPickup() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Забрать заказ?'),
+          content: const Text(
+            'Подтвердите, что вы забрали заказ из ресторана.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Да, забрал'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result == true;
+  }
+
+  Future<bool> _confirmDelivery() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Доставить заказ?'),
+          content: const Text(
+            'Подтвердите доставку только после передачи заказа клиенту.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Да, доставил'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result == true;
   }
 
   String _mainActionLabel(CourierOrderDetails order) {
@@ -168,7 +278,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
     if (order.courierFeeGross != null &&
         order.courierCommissionAmount != null) {
-      return order.courierFeeGross! - order.courierCommissionAmount!;
+      final net = order.courierFeeGross! - order.courierCommissionAmount!;
+      return net < 0 ? 0 : net;
     }
 
     return order.courierFeeGross ?? 0;
@@ -182,6 +293,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     for (int i = s.length - 1; i >= 0; i--) {
       buffer.write(s[i]);
       count++;
+
       if (count % 3 == 0 && i != 0) {
         buffer.write(' ');
       }
@@ -190,10 +302,39 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     return buffer.toString().split('').reversed.join();
   }
 
+  String _humanizeOrderError(Object error) {
+    final text = error.toString();
+
+    if (text.contains('401')) {
+      return 'Сессия истекла. Войдите заново.';
+    }
+
+    if (text.contains('403')) {
+      return 'Этот заказ недоступен для вашего аккаунта.';
+    }
+
+    if (text.contains('404')) {
+      return 'Заказ не найден или уже недоступен.';
+    }
+
+    if (text.contains('409')) {
+      return 'Статус заказа уже изменился. Обновите экран.';
+    }
+
+    return 'Не удалось выполнить действие. Попробуйте ещё раз.';
+  }
+
+  bool _isForbiddenOrNotFound(Object error) {
+    final text = error.toString();
+    return text.contains('403') || text.contains('404') || text.contains('409');
+  }
+
   void _showSnackBar(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(SnackBar(content: Text(message)));
+    messenger?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -214,6 +355,21 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
             color: Colors.black,
           ),
         ),
+        actions: [
+          IconButton(
+            onPressed: _isRefreshing || _isLoading
+                ? null
+                : () => _load(silent: true),
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: _buildBody(),
       bottomNavigationBar: _buildBottomAction(),
@@ -222,16 +378,24 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
     }
 
-    if (_error.isNotEmpty) {
+    if (_error.isNotEmpty && _order == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 42,
+                color: Color(0xFFD92D20),
+              ),
+              const SizedBox(height: 12),
               const Text(
                 'Не удалось загрузить детали заказа',
                 textAlign: TextAlign.center,
@@ -253,7 +417,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
               ),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: _load,
+                onPressed: () => _load(),
                 child: const Text('Повторить'),
               ),
             ],
@@ -263,6 +427,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     }
 
     final order = _order;
+
     if (order == null) {
       return const Center(
         child: Text('Заказ не найден'),
@@ -272,7 +437,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     final income = _formatMoney(_resolveCourierIncome(order));
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(silent: true),
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
@@ -286,7 +451,9 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
             decoration: BoxDecoration(
               color: const Color(0xFFF4FBF1),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFFB7E3B1)),
+              border: Border.all(
+                color: const Color(0xFFB7E3B1),
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,8 +508,12 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Widget? _buildBottomAction() {
     final order = _order;
+
     if (order == null) return null;
     if (order.isDelivered || order.isCanceled) return null;
+
+    final actionEnabled =
+        !_isSubmitting && (order.canMarkPickedUp || order.canMarkDelivered);
 
     return SafeArea(
       top: false,
@@ -359,7 +530,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         child: SizedBox(
           height: 56,
           child: ElevatedButton(
-            onPressed: _isSubmitting ? null : _submitMainAction,
+            onPressed: actionEnabled ? _submitMainAction : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF2F8731),
               disabledBackgroundColor: const Color(0xFF98A2B3),

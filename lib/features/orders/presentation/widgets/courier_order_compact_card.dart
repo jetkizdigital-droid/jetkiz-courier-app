@@ -18,7 +18,7 @@ class CourierOrderCompactCard extends StatelessWidget {
   String? get _primaryActionLabel {
     final status = order.status.toUpperCase();
 
-    if (status == 'ACCEPTED' || status == 'COOKING' || status == 'READY') {
+    if (status == 'READY') {
       return 'Забрал заказ';
     }
 

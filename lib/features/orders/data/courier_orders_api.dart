@@ -6,6 +6,13 @@ class CourierOrdersApi {
 
   final ApiClient _apiClient;
 
+  /// Текущие/мои заказы курьера.
+  ///
+  /// Backend contract:
+  /// GET /orders/courier/my?page=&limit=&status=
+  ///
+  /// Важно: from/to сюда НЕ отправляем, потому что backend controller
+  /// для /orders/courier/my их не принимает как официальный контракт.
   Future<List<CourierOrderItem>> getCourierOrders({
     int page = 1,
     int limit = 100,
@@ -23,31 +30,42 @@ class CourierOrdersApi {
       query['status'] = normalizedStatus;
     }
 
-    final normalizedFrom = (from ?? '').trim();
-    final normalizedTo = (to ?? '').trim();
-
-    if (normalizedFrom.isNotEmpty) {
-      query['from'] = normalizedFrom;
-    }
-    if (normalizedTo.isNotEmpty) {
-      query['to'] = normalizedTo;
-    }
-
     final dynamic response = await _apiClient.get(
       _buildPath('/orders/courier/my', query),
     );
 
-    final itemsRaw =
-        _extractList(response, const ['items']) ??
-        _extractList(response, const ['data', 'items']) ??
-        _extractList(response, const ['orders']) ??
-        _extractList(response, const ['data', 'orders']) ??
-        (response is List ? response : const []);
+    return _parseOrderList(response);
+  }
 
-    return itemsRaw
-        .whereType<Map>()
-        .map((e) => CourierOrderItem.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
+  /// История заказов курьера.
+  ///
+  /// Backend contract:
+  /// GET /orders/courier/history?page=&limit=&status=
+  ///
+  /// from/to пока оставлены в сигнатуре, чтобы не ломать UI-вызовы,
+  /// но в request не отправляются, пока backend-контракт не зафиксирован.
+  Future<List<CourierOrderItem>> getCourierHistory({
+    int page = 1,
+    int limit = 100,
+    String? status,
+    String? from,
+    String? to,
+  }) async {
+    final query = <String, String>{
+      'page': '$page',
+      'limit': '$limit',
+    };
+
+    final normalizedStatus = (status ?? '').trim();
+    if (normalizedStatus.isNotEmpty) {
+      query['status'] = normalizedStatus;
+    }
+
+    final dynamic response = await _apiClient.get(
+      _buildPath('/orders/courier/history', query),
+    );
+
+    return _parseOrderList(response);
   }
 
   Future<CourierOrderItem?> getActiveOrder() async {
@@ -71,10 +89,25 @@ class CourierOrdersApi {
     if (response is Map) {
       final mapped = Map<String, dynamic>.from(response);
       if (mapped.isEmpty) return null;
+
       return CourierOrderItem.fromJson(mapped);
     }
 
     return null;
+  }
+
+  List<CourierOrderItem> _parseOrderList(dynamic response) {
+    final itemsRaw =
+        _extractList(response, const ['items']) ??
+        _extractList(response, const ['data', 'items']) ??
+        _extractList(response, const ['orders']) ??
+        _extractList(response, const ['data', 'orders']) ??
+        (response is List ? response : const []);
+
+    return itemsRaw
+        .whereType<Map>()
+        .map((item) => CourierOrderItem.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
   }
 
   String _buildPath(String basePath, Map<String, String> query) {
@@ -119,6 +152,7 @@ class CourierOrdersApi {
 
     if (current is Map<String, dynamic>) return current;
     if (current is Map) return Map<String, dynamic>.from(current);
+
     return null;
   }
 }

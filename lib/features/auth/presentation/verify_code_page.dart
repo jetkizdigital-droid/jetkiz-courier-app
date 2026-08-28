@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import '../../home/home_page.dart';
+import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
+
 import 'auth_controller.dart';
+import 'auth_gate.dart';
 
 class VerifyCodePage extends StatefulWidget {
   const VerifyCodePage({
@@ -20,6 +24,8 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
   final List<FocusNode> _focusNodes = List.generate(4, (_) => FocusNode());
 
   late final AuthController _authController;
+  late final PushRegistrationService _pushRegistration;
+
   String _error = '';
 
   bool get _canSubmit =>
@@ -31,8 +37,11 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
   @override
   void initState() {
     super.initState();
+
     _authController = AuthController();
     _authController.addListener(_onControllerChanged);
+
+    _pushRegistration = PushRegistrationService();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -46,12 +55,16 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
     _authController.removeListener(_onControllerChanged);
     _authController.dispose();
 
+    unawaited(_pushRegistration.dispose());
+
     for (final controller in _controllers) {
       controller.dispose();
     }
+
     for (final node in _focusNodes) {
       node.dispose();
     }
+
     super.dispose();
   }
 
@@ -73,19 +86,31 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
     if (!mounted) return;
 
     if (ok) {
+      await _registerDeviceAndPushSilently();
+
+      if (!mounted) return;
+
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomePage()),
+        MaterialPageRoute(builder: (_) => const AuthGate()),
         (route) => false,
       );
       return;
     }
 
     setState(() {
-      _error =
-          _authController.error.isNotEmpty
-              ? _authController.error
-              : 'Неверный код';
+      _error = _authController.error.isNotEmpty
+          ? _authController.error
+          : 'Неверный код';
     });
+  }
+
+  Future<void> _registerDeviceAndPushSilently() async {
+    try {
+      await _pushRegistration.initializeAndRegister();
+    } catch (_) {
+      // Не блокируем вход из-за регистрации push/device.
+      // AuthGate после входа попробует регистрацию повторно.
+    }
   }
 
   Future<void> _resend() async {
@@ -104,14 +129,13 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
     if (!mounted) return;
 
     if (!ok) {
-      final message =
-          _authController.error.isNotEmpty
-              ? _authController.error
-              : 'Не удалось отправить код повторно';
+      final message = _authController.error.isNotEmpty
+          ? _authController.error
+          : 'Не удалось отправить код повторно';
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     }
   }
 
@@ -155,6 +179,7 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
     if (index > 0) {
       _controllers[index - 1].clear();
       _focusNodes[index - 1].requestFocus();
+
       setState(() {
         _error = '';
       });
@@ -177,6 +202,7 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
             _onBackspace(index);
             return KeyEventResult.handled;
           }
+
           return KeyEventResult.ignored;
         },
         child: TextField(
@@ -184,10 +210,9 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
           focusNode: _focusNodes[index],
           textAlign: TextAlign.center,
           keyboardType: TextInputType.number,
-          textInputAction:
-              index == _controllers.length - 1
-                  ? TextInputAction.done
-                  : TextInputAction.next,
+          textInputAction: index == _controllers.length - 1
+              ? TextInputAction.done
+              : TextInputAction.next,
           maxLength: 1,
           style: const TextStyle(
             fontSize: 24,
@@ -319,42 +344,41 @@ class _VerifyCodePageState extends State<VerifyCodePage> {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ).copyWith(
-                              backgroundColor: WidgetStateProperty.resolveWith((
-                                states,
-                              ) {
+                              backgroundColor:
+                                  WidgetStateProperty.resolveWith((states) {
                                 if (states.contains(WidgetState.disabled)) {
                                   return const Color(0xFFE5E5E5);
                                 }
+
                                 if (states.contains(WidgetState.pressed)) {
                                   return darkGreen;
                                 }
+
                                 return green;
                               }),
                             ),
-                            child:
-                                _authController.isLoading
-                                    ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                    : const Text(
-                                      'Подтвердить',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
-                                      ),
+                            child: _authController.isLoading
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      color: Colors.white,
                                     ),
+                                  )
+                                : const Text(
+                                    'Подтвердить',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 24),
                         TextButton(
-                          onPressed:
-                              _authController.isLoading ? null : _resend,
+                          onPressed: _authController.isLoading ? null : _resend,
                           child: const Text(
                             'Отправить код повторно',
                             style: TextStyle(

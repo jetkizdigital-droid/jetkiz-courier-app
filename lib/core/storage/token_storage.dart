@@ -27,6 +27,8 @@ class TokenStorage {
   Future<bool> hasSession() async {
     final access = await _storage.read(key: _accessTokenKey);
     final refresh = await _storage.read(key: _refreshTokenKey);
-    return (access?.isNotEmpty ?? false) && (refresh?.isNotEmpty ?? false);
+
+    return (access?.trim().isNotEmpty ?? false) &&
+        (refresh?.trim().isNotEmpty ?? false);
   }
 }

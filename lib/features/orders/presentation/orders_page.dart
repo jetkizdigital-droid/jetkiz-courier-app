@@ -183,7 +183,7 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     });
 
     try {
-      if (status == 'ACCEPTED' || status == 'COOKING' || status == 'READY') {
+      if (status == 'READY') {
         await _detailsApi.markPickedUp(order.id);
       } else if (status == 'ON_THE_WAY') {
         await _detailsApi.markDelivered(order.id);

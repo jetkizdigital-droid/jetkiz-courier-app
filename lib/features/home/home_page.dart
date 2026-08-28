@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
 import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
 import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
+import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -17,10 +19,12 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late final _CourierHomeApi _api;
+  late final CourierLocationService _locationService;
 
   Timer? _activeOrderTimer;
   bool _isPollingActiveOrder = false;
   bool _isActiveOrderActionLoading = false;
+  bool _isChangingOnline = false;
 
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -59,6 +63,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _api = _CourierHomeApi(ApiClient());
+    _locationService = CourierLocationService();
     _loadInitial();
     _startActiveOrderPolling();
   }
@@ -66,6 +71,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _activeOrderTimer?.cancel();
+    unawaited(_locationService.dispose());
     super.dispose();
   }
 
@@ -137,10 +143,11 @@ class _HomePageState extends State<HomePage> {
         error = 'Не удалось загрузить данные';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -158,10 +165,11 @@ class _HomePageState extends State<HomePage> {
         error = 'Не удалось обновить данные';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isRefreshing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
     }
   }
 
@@ -206,15 +214,17 @@ class _HomePageState extends State<HomePage> {
 
     final resolvedActiveOrder = _normalizeActiveOrder(active ?? activeFromMe);
 
+    final resolvedOnline = _readBool(
+      me,
+      const ['isOnline'],
+      fallbackKeys: const ['profile.isOnline', 'courierProfile.isOnline'],
+    );
+
     if (!mounted) return;
 
     setState(() {
       courierName = resolvedName.isEmpty ? 'Курьер' : resolvedName;
-      isOnline = _readBool(
-        me,
-        const ['isOnline'],
-        fallbackKeys: const ['profile.isOnline', 'courierProfile.isOnline'],
-      );
+      isOnline = resolvedOnline;
       todayOrders = todayStats.orders;
       todayEarnings = todayStats.earnings;
       todayCompleted = todayStats.completed;
@@ -222,26 +232,107 @@ class _HomePageState extends State<HomePage> {
       activeOrder = resolvedActiveOrder;
       error = '';
     });
+
+    if (resolvedOnline && !_locationService.isTracking) {
+      unawaited(_startLocationTrackingSilently());
+    }
+
+    if (!resolvedOnline && _locationService.isTracking) {
+      unawaited(_locationService.stopTracking());
+    }
+  }
+
+  Future<void> _startLocationTrackingSilently() async {
+    try {
+      final result = await _locationService.startTracking();
+
+      if (!mounted) return;
+
+      if (!result.started) {
+        _showSnackBar(result.message);
+      }
+    } catch (_) {
+      // Геолокация не должна ломать загрузку главного экрана.
+    }
   }
 
   Future<void> _toggleOnline() async {
-    final nextValue = !isOnline;
-    final previousValue = isOnline;
+  if (_isChangingOnline) return;
 
-    setState(() {
-      isOnline = nextValue;
-    });
+  final nextValue = !isOnline;
+  final previousValue = isOnline;
 
+  setState(() {
+    _isChangingOnline = true;
+  });
+
+  if (nextValue) {
     try {
-      await _api.setOnline(nextValue);
-    } catch (_) {
+      final permission = await _locationService.ensurePermission();
+
+      if (!permission.allowed) {
+        if (!mounted) return;
+
+        setState(() {
+          isOnline = previousValue;
+          _isChangingOnline = false;
+        });
+
+        _showSnackBar(permission.message);
+        return;
+      }
+
+      await _api.setOnline(true);
+
       if (!mounted) return;
+
+      setState(() {
+        isOnline = true;
+        _isChangingOnline = false;
+      });
+
+      _showSnackBar('Вы онлайн. Запускаем геолокацию.');
+
+      unawaited(_locationService.startTracking());
+    } catch (_) {
+      await _locationService.stopTracking();
+
+      if (!mounted) return;
+
       setState(() {
         isOnline = previousValue;
+        _isChangingOnline = false;
       });
-      _showSnackBar('Не удалось изменить статус');
+
+      _showSnackBar('Не удалось выйти на линию');
     }
+
+    return;
   }
+
+  try {
+    await _api.setOnline(false);
+    await _locationService.stopTracking();
+
+    if (!mounted) return;
+
+    setState(() {
+      isOnline = false;
+      _isChangingOnline = false;
+    });
+
+    _showSnackBar('Вы оффлайн. Геолокация остановлена.');
+  } catch (_) {
+    if (!mounted) return;
+
+    setState(() {
+      isOnline = previousValue;
+      _isChangingOnline = false;
+    });
+
+    _showSnackBar('Не удалось изменить статус');
+  }
+}
 
   void _onBottomBarTap(int index) {
     if (index == 0) return;
@@ -275,8 +366,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openNotifications() {
-    _showSnackBar('Экран уведомлений скоро подключим');
-  }
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => const NotificationsPage(),
+    ),
+  );
+}
 
   Future<void> _openActiveOrder() async {
     final id = activeOrder?['id']?.toString() ?? '';
@@ -297,7 +392,7 @@ class _HomePageState extends State<HomePage> {
   String _activeOrderActionLabel() {
     final status = (activeOrder?['status'] ?? '').toString().toUpperCase();
 
-    if (status == 'ACCEPTED' || status == 'COOKING' || status == 'READY') {
+    if (status == 'READY') {
       return 'Забрал заказ';
     }
 
@@ -320,10 +415,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    if (!(status == 'ACCEPTED' ||
-        status == 'COOKING' ||
-        status == 'READY' ||
-        status == 'ON_THE_WAY')) {
+    if (!(status == 'READY' || status == 'ON_THE_WAY')) {
       await _openActiveOrder();
       return;
     }
@@ -333,7 +425,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      if (status == 'ACCEPTED' || status == 'COOKING' || status == 'READY') {
+      if (status == 'READY') {
         await _api.updateCourierOrderStatus(
           orderId: id,
           status: 'ON_THE_WAY',
@@ -828,9 +920,11 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   Center(
                     child: Text(
-                      isOnline
-                          ? 'Вы можете принимать заказы'
-                          : 'Включите статус, чтобы получать заказы',
+                      _isChangingOnline
+                          ? 'Обновляем статус и геолокацию...'
+                          : isOnline
+                              ? 'Вы можете принимать заказы'
+                              : 'Включите статус, чтобы получать заказы',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -840,14 +934,13 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 10),
                   GestureDetector(
-                    onTap: _toggleOnline,
+                    onTap: _isChangingOnline ? null : _toggleOnline,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 180),
                       width: double.infinity,
                       height: 76,
                       decoration: BoxDecoration(
-                        color:
-                            isOnline ? darkGreen : const Color(0xFFEDEDF1),
+                        color: isOnline ? darkGreen : const Color(0xFFEDEDF1),
                         borderRadius: BorderRadius.circular(22),
                         border: Border.all(
                           color: isOnline
@@ -866,16 +959,28 @@ class _HomePageState extends State<HomePage> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(
-                              color: isOnline
-                                  ? Colors.white
-                                  : const Color(0xFF7E7E86),
-                              shape: BoxShape.circle,
+                          if (_isChangingOnline)
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: isOnline
+                                    ? Colors.white
+                                    : const Color(0xFF676B73),
+                              ),
+                            )
+                          else
+                            Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: isOnline
+                                    ? Colors.white
+                                    : const Color(0xFF7E7E86),
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
                           const SizedBox(width: 14),
                           Text(
                             isOnline ? 'Онлайн' : 'Оффлайн',
@@ -975,7 +1080,7 @@ class _CourierHomeApi {
 
         final courierFeeNet =
             _tryInt(_readValue(order, const ['courierFee'])) ??
-            _resolveNetCourierPayout(order);
+                _resolveNetCourierPayout(order);
 
         final orderDayBase = assignedAt ?? createdAt;
         final isTodayOrder =
@@ -1034,7 +1139,20 @@ class _CourierHomeApi {
 
   Future<int> getUnreadCount() async {
     try {
-      final data = await _client.get('/notifications');
+      final data = await _client.get('/notifications/unread-count');
+      final map = _asMap(data);
+
+      final count = _tryInt(map['count']);
+      if (count != null) return count;
+
+      final unreadCount = _tryInt(map['unreadCount']);
+      if (unreadCount != null) return unreadCount;
+    } catch (_) {
+      // fallback below
+    }
+
+    try {
+      final data = await _client.get('/notifications?page=1&limit=50');
       final map = _asMap(data);
 
       final direct = _tryInt(map['unreadCount']);
@@ -1045,10 +1163,11 @@ class _CourierHomeApi {
       if (metaUnread != null) return metaUnread;
 
       final items = _extractList(map, const ['items']) ?? const [];
+
       return items
           .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .where((e) => e['isRead'] != true)
+          .map((item) => Map<String, dynamic>.from(item))
+          .where((item) => item['isRead'] != true)
           .length;
     } catch (_) {
       return 0;
@@ -1058,6 +1177,7 @@ class _CourierHomeApi {
   Future<void> setOnline(bool value) async {
     await _client.patch('/couriers/me/online', {
       'isOnline': value,
+      'source': 'mobile',
     });
   }
 
@@ -1313,21 +1433,6 @@ Map<String, dynamic>? _readMap(
   if (current is Map<String, dynamic>) return current;
   if (current is Map) return Map<String, dynamic>.from(current);
   return null;
-}
-
-List<dynamic>? _extractList(
-  Map<String, dynamic> json,
-  List<String> path,
-) {
-  dynamic current = json;
-  for (final part in path) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      return null;
-    }
-  }
-  return current is List ? current : null;
 }
 
 String _readString(
