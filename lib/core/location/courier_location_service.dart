@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 
@@ -10,16 +11,15 @@ class CourierLocationService {
 
   final ApiClient _apiClient;
 
-  Timer? _heartbeatTimer;
+  StreamSubscription<Position>? _positionSubscription;
   bool _isSending = false;
   bool _isTracking = false;
+  Position? _queuedPosition;
 
   static const Duration heartbeatInterval = Duration(seconds: 20);
 
   bool get isTracking => _isTracking;
 
-  /// Проверяет GPS + permission.
-  /// Возвращает result, чтобы экран мог показать нормальное сообщение.
   Future<CourierLocationPermissionResult> ensurePermission() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
@@ -62,7 +62,6 @@ class CourierLocationService {
     );
   }
 
-  /// Получает текущую позицию.
   Future<Position> getCurrentPosition() async {
     final permission = await ensurePermission();
 
@@ -78,47 +77,64 @@ class CourierLocationService {
         ),
       );
     } on TimeoutException {
-      return Geolocator.getLastKnownPosition().then((lastKnown) {
-        if (lastKnown != null) {
-          return lastKnown;
-        }
+      final lastKnown = await Geolocator.getLastKnownPosition();
 
-        throw CourierLocationException(
-          'Не удалось получить геолокацию. Попробуйте ещё раз.',
-        );
-      });
-    } catch (e) {
+      if (lastKnown != null) {
+        return lastKnown;
+      }
+
       throw CourierLocationException(
-        'Не удалось получить геолокацию: $e',
+        'Не удалось получить геолокацию. Попробуйте ещё раз.',
+      );
+    } catch (e) {
+      if (e is CourierLocationException) rethrow;
+      throw CourierLocationException('Не удалось получить геолокацию: $e');
+    }
+  }
+
+  Future<CourierLocationSendResult> sendCurrentLocation({
+    String source = 'manual',
+  }) async {
+    try {
+      final position = await getCurrentPosition();
+      return _sendPosition(position, source: source);
+    } catch (e) {
+      return CourierLocationSendResult(
+        success: false,
+        skipped: false,
+        message: e.toString(),
       );
     }
   }
 
-  /// Одноразово отправляет координаты на backend.
-  Future<CourierLocationSendResult> sendCurrentLocation({
-    String source = 'manual',
+  Future<CourierLocationSendResult> _sendPosition(
+    Position position, {
+    required String source,
   }) async {
     if (_isSending) {
+      _queuedPosition = position;
       return const CourierLocationSendResult(
         success: false,
         skipped: true,
-        message: 'Отправка координат уже выполняется',
+        message: 'Предыдущая отправка координат ещё выполняется',
       );
     }
 
     _isSending = true;
 
     try {
-      final position = await getCurrentPosition();
-
-      final body = <String, dynamic>{
-        'lat': position.latitude,
-        'lng': position.longitude,
-      };
-
       final response = await _apiClient.post(
         '/couriers/me/location',
-        body,
+        <String, dynamic>{
+          'lat': position.latitude,
+          'lng': position.longitude,
+          'accuracy': position.accuracy,
+          if (position.heading.isFinite && position.heading >= 0)
+            'heading': position.heading,
+          if (position.speed.isFinite && position.speed >= 0)
+            'speed': position.speed,
+          'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        },
       );
 
       return CourierLocationSendResult(
@@ -137,11 +153,16 @@ class CourierLocationService {
       );
     } finally {
       _isSending = false;
+
+      final queued = _queuedPosition;
+      _queuedPosition = null;
+
+      if (queued != null && _isTracking) {
+        unawaited(_sendPosition(queued, source: 'queued'));
+      }
     }
   }
 
-  /// Запускает периодическую отправку координат.
-  /// Используем, когда курьер online.
   Future<CourierLocationStartResult> startTracking({
     Duration interval = heartbeatInterval,
   }) async {
@@ -161,25 +182,59 @@ class CourierLocationService {
 
     final firstSend = await sendCurrentLocation(source: 'online_start');
 
-    _heartbeatTimer = Timer.periodic(interval, (_) {
-      unawaited(sendCurrentLocation(source: 'heartbeat'));
-    });
+    final settings = _buildTrackingSettings(interval);
+
+    _positionSubscription = Geolocator.getPositionStream(
+      locationSettings: settings,
+    ).listen(
+      (position) {
+        if (!_isTracking) return;
+        unawaited(_sendPosition(position, source: 'stream'));
+      },
+      onError: (_) {
+        // Потеря одного GPS update не должна останавливать рабочую смену.
+        // Следующий position event или повторный запуск экрана восстановит поток.
+      },
+      cancelOnError: false,
+    );
 
     return CourierLocationStartResult(
       started: true,
       message: firstSend.success
           ? 'Отправка геолокации запущена'
-          : firstSend.message,
+          : 'Трекинг запущен, ожидаем следующую GPS-точку',
       permission: permission,
       firstSend: firstSend,
     );
   }
 
-  /// Останавливает периодическую отправку координат.
+  LocationSettings _buildTrackingSettings(Duration interval) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+        intervalDuration: interval,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'JETKIZ — вы на линии',
+          notificationText:
+              'Геопозиция используется для назначения и выполнения доставки.',
+          enableWakeLock: true,
+        ),
+      );
+    }
+
+    return LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
+      timeLimit: null,
+    );
+  }
+
   Future<void> stopTracking() async {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
     _isTracking = false;
+    _queuedPosition = null;
+    await _positionSubscription?.cancel();
+    _positionSubscription = null;
   }
 
   Future<void> openLocationSettings() async {
