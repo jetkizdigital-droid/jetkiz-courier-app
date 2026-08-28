@@ -5,7 +5,6 @@ import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
 import 'package:jetkiz_courier_app/features/home/home_page.dart';
 import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
-import 'package:jetkiz_courier_app/features/orders/data/courier_order_details_api.dart';
 import 'package:jetkiz_courier_app/features/orders/data/courier_orders_api.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_item.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
@@ -21,28 +20,25 @@ class OrdersPage extends StatefulWidget {
 }
 
 class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
+  late final ApiClient _client;
   late final CourierOrdersApi _api;
-  late final CourierOrderDetailsApi _detailsApi;
 
   Timer? _pollTimer;
-
-  bool _isForeground = true;
-  bool _isLoading = true;
-  bool _isPolling = false;
-  bool _hasLoadedOnce = false;
-
+  bool _foreground = true;
+  bool _loading = true;
+  bool _refreshing = false;
+  bool _polling = false;
   String _error = '';
   OrdersDateRange _range = OrdersDateRange.today();
   List<CourierOrderItem> _orders = const [];
-  final Set<String> _actionLoadingIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _api = CourierOrdersApi(ApiClient());
-    _detailsApi = CourierOrderDetailsApi(ApiClient());
-    _loadInitial();
+    _client = ApiClient();
+    _api = CourierOrdersApi(_client);
+    unawaited(_load());
     _startPolling();
   }
 
@@ -50,179 +46,125 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    _client.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final wasForeground = _isForeground;
-    _isForeground = state == AppLifecycleState.resumed;
+    final wasForeground = _foreground;
+    _foreground = state == AppLifecycleState.resumed;
 
-    if (!wasForeground && _isForeground) {
-      _silentRefresh(force: true);
+    if (!wasForeground && _foreground) {
+      unawaited(_load(silent: true));
     }
   }
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _silentRefresh(),
-    );
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_foreground) unawaited(_load(silent: true, polling: true));
+    });
   }
 
-  DateTime _onlyDate(DateTime value) {
-    final local = value.toLocal();
-    return DateTime(local.year, local.month, local.day);
+  Future<void> _load({bool silent = false, bool polling = false}) async {
+    if (_loading && silent) return;
+    if (_refreshing || _polling) return;
+
+    if (polling) {
+      _polling = true;
+    } else if (silent) {
+      if (mounted) setState(() => _refreshing = true);
+    } else {
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _error = '';
+        });
+      }
+    }
+
+    try {
+      // Active orders must always remain visible, while recent completed rows
+      // are filtered locally by the selected date range. Paging in the API
+      // prevents the old backend 100-row cap from silently truncating history.
+      final rows = await _api.getCourierOrders(page: 1, limit: 500);
+      final filtered = rows.where((order) {
+        if (!_isTerminal(order)) return true;
+        return _matchesRange(order, _range);
+      }).toList()
+        ..sort(_compareOrders);
+
+      if (!mounted) return;
+      setState(() {
+        _orders = filtered;
+        _error = '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = _humanizeError(e));
+    } finally {
+      _polling = false;
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
+    }
   }
 
-  DateTime _resolveFilterDate(CourierOrderItem order) {
-    return _onlyDate(order.relevantDate);
-  }
+  bool _isTerminal(CourierOrderItem order) => order.isDelivered || order.isCanceled;
 
   bool _matchesRange(CourierOrderItem order, OrdersDateRange range) {
-    final orderDate = _resolveFilterDate(order);
+    final date = _dateOnly(order.relevantDate.toLocal());
+    final from = range.from == null ? null : _dateOnly(range.from!);
+    final to = range.to == null ? null : _dateOnly(range.to!);
 
-    final from = range.from == null ? null : _onlyDate(range.from!);
-    final to = range.to == null ? null : _onlyDate(range.to!);
-
-    if (from != null && orderDate.isBefore(from)) return false;
-    if (to != null && orderDate.isAfter(to)) return false;
-
+    if (from != null && date.isBefore(from)) return false;
+    if (to != null && date.isAfter(to)) return false;
     return true;
   }
 
-  bool _isActiveOrder(CourierOrderItem order) {
-    return !order.isDelivered && !order.isCanceled;
+  DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
+  int _compareOrders(CourierOrderItem a, CourierOrderItem b) {
+    final byWeight = _statusWeight(a.status).compareTo(_statusWeight(b.status));
+    if (byWeight != 0) return byWeight;
+    return b.relevantDate.compareTo(a.relevantDate);
   }
 
-  int _sortWeight(CourierOrderItem order) {
-    final status = order.status.toUpperCase();
-
-    if (status == 'ON_THE_WAY') return 0;
-    if (status == 'READY') return 1;
-    if (status == 'COOKING') return 2;
-    if (status == 'ACCEPTED') return 3;
-    if (status == 'DELIVERED') return 4;
-    if (status == 'CANCELED' || status == 'CANCELLED') return 5;
-    return 6;
-  }
-
-  Future<void> _loadInitial() async {
-    setState(() {
-      _isLoading = true;
-      _error = '';
-    });
-
-    try {
-      await _loadOrders();
-      _hasLoadedOnce = true;
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Не удалось загрузить заказы';
-      });
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _silentRefresh({bool force = false}) async {
-    if (!_isForeground && !force) return;
-    if (_isLoading || _isPolling) return;
-
-    _isPolling = true;
-
-    try {
-      await _loadOrders();
-      _hasLoadedOnce = true;
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Не удалось обновить заказы';
-      });
-    } finally {
-      _isPolling = false;
-    }
-  }
-
-  Future<void> _loadOrders() async {
-    final result = await _api.getCourierOrders(
-      page: 1,
-      limit: 200,
-    );
-
-    final filtered = result.where((e) {
-      if (_isActiveOrder(e)) return true;
-      return _matchesRange(e, _range);
-    }).toList()
-      ..sort((a, b) {
-        final cmp = _sortWeight(a).compareTo(_sortWeight(b));
-        if (cmp != 0) return cmp;
-        return b.relevantDate.compareTo(a.relevantDate);
-      });
-
-    if (!mounted) return;
-
-    setState(() {
-      _orders = filtered;
-      _error = '';
-    });
-  }
-
-  Future<void> _handlePrimaryAction(CourierOrderItem order) async {
-    if (_actionLoadingIds.contains(order.id)) return;
-
-    final status = order.status.toUpperCase();
-
-    setState(() {
-      _actionLoadingIds.add(order.id);
-    });
-
-    try {
-      if (status == 'READY') {
-        await _detailsApi.markPickedUp(order.id);
-      } else if (status == 'ON_THE_WAY') {
-        await _detailsApi.markDelivered(order.id);
-      } else {
-        return;
-      }
-
-      await _loadOrders();
-
-      if (!mounted) return;
-
-      final message = status == 'ON_THE_WAY'
-          ? 'Заказ отмечен как доставленный'
-          : 'Заказ отмечен как забранный';
-
-      _showSnackBar(message);
-    } catch (_) {
-      if (!mounted) return;
-      _showSnackBar('Не удалось обновить статус заказа');
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _actionLoadingIds.remove(order.id);
-      });
+  int _statusWeight(String raw) {
+    switch (raw.toUpperCase()) {
+      case 'ON_THE_WAY':
+        return 0;
+      case 'READY':
+        return 1;
+      case 'COOKING':
+        return 2;
+      case 'ACCEPTED':
+        return 3;
+      case 'DELIVERED':
+        return 4;
+      case 'CANCELED':
+      case 'CANCELLED':
+        return 5;
+      default:
+        return 6;
     }
   }
 
   Future<void> _pickCustomRange() async {
     final now = DateTime.now();
-    final initial = DateTimeRange(
-      start: _range.from ?? now.subtract(const Duration(days: 6)),
-      end: _range.to ?? now,
-    );
-
     final picked = await showDateRangePicker(
       context: context,
-      firstDate: DateTime(2024, 1, 1),
+      firstDate: DateTime(2024),
       lastDate: DateTime(now.year + 1, 12, 31),
-      initialDateRange: initial,
+      initialDateRange: DateTimeRange(
+        start: _range.from ?? now.subtract(const Duration(days: 6)),
+        end: _range.to ?? now,
+      ),
       helpText: 'Выберите период',
       saveText: 'Готово',
       cancelText: 'Отмена',
@@ -233,60 +175,53 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     if (picked == null) return;
 
     setState(() {
-      _range = OrdersDateRange.custom(
-        from: picked.start,
-        to: picked.end,
-      );
+      _range = OrdersDateRange.custom(from: picked.start, to: picked.end);
     });
+    await _load();
+  }
 
-    await _loadInitial();
+  Future<void> _openOrder(CourierOrderItem order) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: order.id)),
+    );
+    if (mounted) await _load(silent: true);
   }
 
   void _onBottomBarTap(int index) {
     if (index == 1) return;
 
-    if (index == 0) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const HomePage(),
-        ),
-      );
-      return;
-    }
+    final Widget page = switch (index) {
+      0 => const HomePage(),
+      2 => const FinancePage(),
+      3 => const ProfilePage(),
+      _ => const OrdersPage(),
+    };
 
-    if (index == 2) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const FinancePage(),
-        ),
-      );
-      return;
-    }
-
-    if (index == 3) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const ProfilePage(),
-        ),
-      );
-      return;
-    }
-  }
-
-  Future<void> _openOrder(CourierOrderItem order) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => OrderDetailsPage(orderId: order.id),
-      ),
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => page),
     );
-
-    await _silentRefresh(force: true);
   }
 
-  void _showSnackBar(String message) {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(SnackBar(content: Text(message)));
+  String _humanizeError(Object error) {
+    if (error is FormatException) {
+      return 'Сервер вернул некорректные данные заказа. Обновите экран позже.';
+    }
+
+    if (error is ApiException) {
+      switch (error.kind) {
+        case ApiErrorKind.network:
+          return 'Нет соединения с сервером.';
+        case ApiErrorKind.timeout:
+          return 'Сервер не ответил вовремя.';
+        case ApiErrorKind.sessionExpired:
+        case ApiErrorKind.unauthorized:
+          return 'Сессия истекла. Войдите заново.';
+        default:
+          return 'Не удалось загрузить заказы.';
+      }
+    }
+
+    return 'Не удалось загрузить заказы.';
   }
 
   @override
@@ -305,12 +240,8 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
             Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
               decoration: const BoxDecoration(
-                color: bg,
                 border: Border(
-                  bottom: BorderSide(
-                    color: Color(0xFFE4E8EF),
-                    width: 1,
-                  ),
+                  bottom: BorderSide(color: Color(0xFFE4E8EF)),
                 ),
               ),
               child: Column(
@@ -321,49 +252,46 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.w800,
-                      color: Colors.black,
                     ),
                   ),
                   const SizedBox(height: 12),
                   OrdersPeriodFilter(
                     value: _range,
-                    onChanged: (value) async {
-                      setState(() {
-                        _range = value;
-                      });
-                      await _loadInitial();
+                    onChanged: (value) {
+                      setState(() => _range = value);
+                      unawaited(_load());
                     },
                     onTapCustom: _pickCustomRange,
                   ),
-                  const SizedBox(height: 10),
-                  AnimatedOpacity(
-                    opacity: _isPolling ? 1 : 0,
+                  AnimatedSwitcher(
                     duration: const Duration(milliseconds: 180),
-                    child: const Row(
-                      children: [
-                        SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Обновляется...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF667085),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: (_refreshing || _polling)
+                        ? const Padding(
+                            padding: EdgeInsets.only(top: 10),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Обновляем заказы…',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF667085),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const SizedBox(height: 0),
                   ),
                 ],
               ),
             ),
-            Expanded(
-              child: _buildBody(),
-            ),
+            Expanded(child: _buildBody()),
           ],
         ),
       ),
@@ -371,72 +299,73 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
   }
 
   Widget _buildBody() {
-    if (_isLoading && !_hasLoadedOnce) {
-      return const Center(
-        child: CircularProgressIndicator(),
+    if (_loading && _orders.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_orders.isEmpty && _error.isNotEmpty) {
+      return _CenteredState(
+        icon: Icons.cloud_off_rounded,
+        title: 'Не удалось загрузить заказы',
+        subtitle: _error,
+        action: 'Повторить',
+        onAction: () => unawaited(_load()),
+      );
+    }
+
+    if (_orders.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: () => _load(silent: true),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 120),
+            _CenteredState(
+              icon: Icons.inventory_2_outlined,
+              title: 'Заказов нет',
+              subtitle: 'Активные и завершённые доставки появятся здесь.',
+            ),
+          ],
+        ),
       );
     }
 
     return Stack(
       children: [
-        _orders.isEmpty
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 48, 20, 24),
-                children: const [
-                  _EmptyState(),
-                ],
-              )
-            : ListView.separated(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                itemCount: _orders.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (_, index) {
-                  final order = _orders[index];
-                  return CourierOrderCompactCard(
-                    order: order,
-                    onTap: () => _openOrder(order),
-                    onPrimaryAction: () => _handlePrimaryAction(order),
-                    isPrimaryActionLoading: _actionLoadingIds.contains(order.id),
-                  );
-                },
-              ),
+        RefreshIndicator(
+          onRefresh: () => _load(silent: true),
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+            itemCount: _orders.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (_, index) {
+              final order = _orders[index];
+              return CourierOrderCompactCard(
+                order: order,
+                onTap: () => _openOrder(order),
+              );
+            },
+          ),
+        ),
         if (_error.isNotEmpty)
           Positioned(
             left: 16,
             right: 16,
-            bottom: 16,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF5F5),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: const Color(0xFFF1C4C4),
-                    width: 1.2,
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x14000000),
-                      blurRadius: 8,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: const Text(
-                  'Не удалось обновить заказы. Повторим автоматически.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFDC2626),
-                  ),
+            bottom: 14,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF5F5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFF1C4C4)),
+              ),
+              child: Text(
+                _error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFB42318),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -446,46 +375,52 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+class _CenteredState extends StatelessWidget {
+  const _CenteredState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.action,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? action;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: const Column(
-        children: [
-          Icon(
-            Icons.inventory_2_outlined,
-            size: 42,
-            color: Color(0xFF98A2B3),
-          ),
-          SizedBox(height: 12),
-          Text(
-            'Заказов нет',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: Colors.black,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: const Color(0xFF98A2B3)),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
-          ),
-          SizedBox(height: 6),
-          Text(
-            'Здесь будут показаны активные, доставленные и отменённые заказы',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF667085),
+            const SizedBox(height: 7),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: Color(0xFF667085),
+              ),
             ),
-          ),
-        ],
+            if (action != null && onAction != null) ...[
+              const SizedBox(height: 16),
+              FilledButton(onPressed: onAction, child: Text(action!)),
+            ],
+          ],
+        ),
       ),
     );
   }
