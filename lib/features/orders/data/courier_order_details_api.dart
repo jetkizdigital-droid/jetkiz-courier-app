@@ -7,56 +7,48 @@ class CourierOrderDetailsApi {
   final ApiClient _client;
 
   Future<CourierOrderDetails> getOrderDetails(String orderId) async {
-    final dynamic response = await _client.get('/orders/courier/$orderId');
-
-    if (response is Map<String, dynamic>) {
-      return CourierOrderDetails.fromJson(response);
-    }
-
-    if (response is Map) {
-      return CourierOrderDetails.fromJson(
-        Map<String, dynamic>.from(response),
-      );
-    }
-
-    throw Exception('Некорректный ответ сервера по деталям заказа');
+    return _parseDeliveryOrder(
+      await _client.get('/orders/courier/$orderId'),
+    );
   }
 
   Future<CourierOrderDetails> markPickedUp(String orderId) async {
-    final dynamic response = await _client.patch(
-      '/orders/courier/$orderId/status',
-      {'status': 'ON_THE_WAY'},
+    return _parseDeliveryOrder(
+      await _client.patch(
+        '/orders/courier/$orderId/status',
+        {'status': 'ON_THE_WAY'},
+      ),
     );
-
-    if (response is Map<String, dynamic>) {
-      return CourierOrderDetails.fromJson(response);
-    }
-
-    if (response is Map) {
-      return CourierOrderDetails.fromJson(
-        Map<String, dynamic>.from(response),
-      );
-    }
-
-    throw Exception('Некорректный ответ сервера при смене статуса');
   }
 
   Future<CourierOrderDetails> markDelivered(String orderId) async {
-    final dynamic response = await _client.patch(
-      '/orders/courier/$orderId/status',
-      {'status': 'DELIVERED'},
+    return _parseDeliveryOrder(
+      await _client.patch(
+        '/orders/courier/$orderId/status',
+        {'status': 'DELIVERED'},
+      ),
     );
+  }
+
+  CourierOrderDetails _parseDeliveryOrder(dynamic response) {
+    final Map<String, dynamic> map;
 
     if (response is Map<String, dynamic>) {
-      return CourierOrderDetails.fromJson(response);
+      map = response;
+    } else if (response is Map) {
+      map = Map<String, dynamic>.from(response);
+    } else {
+      throw const FormatException('Некорректный ответ сервера по заказу');
     }
 
-    if (response is Map) {
-      return CourierOrderDetails.fromJson(
-        Map<String, dynamic>.from(response),
+    final order = CourierOrderDetails.fromJson(map);
+
+    if (!order.isDelivery) {
+      throw const FormatException(
+        'Самовывоз не должен быть доступен курьерскому приложению',
       );
     }
 
-    throw Exception('Некорректный ответ сервера при смене статуса');
+    return order;
   }
 }
