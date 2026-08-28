@@ -18,41 +18,43 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  late final ApiClient _client;
   late final _CourierHomeApi _api;
-  late final CourierLocationService _locationService;
+  final CourierLocationService _location = CourierLocationService();
 
   Timer? _pollTimer;
   bool _foreground = true;
   bool _loading = true;
   bool _refreshing = false;
-  bool _changingOnline = false;
   bool _polling = false;
+  bool _changingOnline = false;
 
-  bool isOnline = false;
-  String courierName = 'Курьер';
-  int todayOrders = 0;
-  int todayEarnings = 0;
-  int todayCompleted = 0;
-  int unreadCount = 0;
-  Map<String, dynamic>? activeOrder;
-  String error = '';
+  bool _isOnline = false;
+  String _courierName = 'Курьер';
+  int _todayOrders = 0;
+  int _todayCompleted = 0;
+  int _todayEarnings = 0;
+  int _unreadCount = 0;
+  Map<String, dynamic>? _activeOrder;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _api = _CourierHomeApi(ApiClient());
-    _locationService = CourierLocationService();
-    _loadInitial();
-    _startPolling();
+    _client = ApiClient();
+    _api = _CourierHomeApi(_client);
+    unawaited(_load());
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_foreground) unawaited(_pollOperationalState());
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
-    unawaited(_locationService.dispose());
-    _api.dispose();
+    _client.dispose();
     super.dispose();
   }
 
@@ -62,92 +64,80 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _foreground = state == AppLifecycleState.resumed;
 
     if (!wasForeground && _foreground) {
-      unawaited(_refresh(silent: true));
+      unawaited(_load(silent: true));
     }
   }
 
-  void _startPolling() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (_foreground) unawaited(_pollOperationalState());
-    });
-  }
-
-  Future<void> _loadInitial() async {
-    setState(() {
-      _loading = true;
-      error = '';
-    });
-
-    try {
-      await _loadData();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => error = _humanizeError(e));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _refresh({bool silent = false}) async {
+  Future<void> _load({bool silent = false}) async {
     if (_refreshing) return;
 
-    if (!silent && mounted) {
-      setState(() {
-        _refreshing = true;
-        error = '';
-      });
+    if (silent) {
+      if (mounted) setState(() => _refreshing = true);
+    } else {
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _error = null;
+        });
+      }
     }
 
     try {
-      await _loadData();
-    } catch (e) {
+      final results = await Future.wait<dynamic>([
+        _api.getMe(),
+        _api.getTodayStats(),
+        _api.getActiveOrder(),
+        _api.getUnreadCount(),
+      ]);
+
+      final me = results[0] as Map<String, dynamic>;
+      final stats = results[1] as _HomeTodayStats;
+      final active = results[2] as Map<String, dynamic>?;
+      final profile = _map(me['courierProfile']) ?? _map(me['profile']);
+      final firstName = _text(me['firstName']).isNotEmpty
+          ? _text(me['firstName'])
+          : _text(profile?['firstName']);
+      final lastName = _text(me['lastName']).isNotEmpty
+          ? _text(me['lastName'])
+          : _text(profile?['lastName']);
+      final online = _bool(me['isOnline']) || _bool(profile?['isOnline']);
+
       if (!mounted) return;
-      setState(() => error = _humanizeError(e));
+
+      setState(() {
+        final name = [
+          firstName,
+          lastName,
+        ].where((value) => value.isNotEmpty).join(' ');
+        _courierName = name.isEmpty ? 'Курьер' : name;
+        _isOnline = online;
+        _todayOrders = stats.orders;
+        _todayCompleted = stats.completed;
+        _todayEarnings = stats.earnings;
+        _unreadCount = results[3] as int;
+        _activeOrder = _normalizeActiveOrder(active);
+        _error = null;
+      });
+
+      if (online && !_location.isTracking) {
+        final tracking = await _location.startTracking();
+        if (!tracking.started && mounted) {
+          _showSnackBar(tracking.message);
+        }
+      }
+
+      if (!online && _location.isTracking && _activeOrder == null) {
+        await _location.stopTracking();
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _humanizeError(error));
     } finally {
-      if (mounted) setState(() => _refreshing = false);
-    }
-  }
-
-  Future<void> _loadData() async {
-    final results = await Future.wait<dynamic>([
-      _api.getMe(),
-      _api.getTodayStats(),
-      _api.getActiveOrder(),
-      _api.getUnreadCount(),
-    ]);
-
-    final me = results[0] as Map<String, dynamic>;
-    final stats = results[1] as _HomeTodayStats;
-    final active = results[2] as Map<String, dynamic>?;
-    final unread = results[3] as int;
-
-    final firstName = _string(me['firstName']);
-    final lastName = _string(me['lastName']);
-    final fullName = [firstName, lastName].where((e) => e.isNotEmpty).join(' ');
-    final online = _bool(me['isOnline']) ||
-        _bool(_map(me['profile'])?['isOnline']) ||
-        _bool(_map(me['courierProfile'])?['isOnline']);
-
-    if (!mounted) return;
-
-    setState(() {
-      courierName = fullName.isEmpty ? 'Курьер' : fullName;
-      isOnline = online;
-      todayOrders = stats.orders;
-      todayEarnings = stats.earnings;
-      todayCompleted = stats.completed;
-      unreadCount = unread;
-      activeOrder = _normalizeActiveOrder(active);
-      error = '';
-    });
-
-    if (online && !_locationService.isTracking) {
-      unawaited(_startLocationTrackingSilently());
-    }
-
-    if (!online && _locationService.isTracking && activeOrder == null) {
-      unawaited(_locationService.stopTracking());
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -163,46 +153,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
       if (!mounted) return;
 
-      final nextOrder = _normalizeActiveOrder(
-        results[0] as Map<String, dynamic>?,
-      );
-      final previousId = _string(activeOrder?['id']);
-      final nextId = _string(nextOrder?['id']);
+      final previousId = _text(_activeOrder?['id']);
+      final next = _normalizeActiveOrder(results[0] as Map<String, dynamic>?);
+      final nextId = _text(next?['id']);
 
       setState(() {
-        activeOrder = nextOrder;
-        unreadCount = results[1] as int;
+        _activeOrder = next;
+        _unreadCount = results[1] as int;
       });
 
       if (previousId.isEmpty && nextId.isNotEmpty) {
         _showSnackBar('Поступил новый заказ');
       }
     } catch (_) {
-      // Background polling is best-effort. Push remains the primary signal.
+      // Push is the primary signal; polling is only a fallback.
     } finally {
       _polling = false;
-    }
-  }
-
-  Future<void> _startLocationTrackingSilently() async {
-    try {
-      final result = await _locationService.startTracking();
-      if (!mounted) return;
-
-      if (!result.started) {
-        _showSnackBar(result.message);
-      }
-    } catch (_) {
-      // The screen stays usable; the next foreground/resume retries tracking.
     }
   }
 
   Future<void> _toggleOnline() async {
     if (_changingOnline) return;
 
-    final next = !isOnline;
+    final next = !_isOnline;
 
-    if (!next && activeOrder != null) {
+    if (!next && _activeOrder != null) {
       _showSnackBar('Нельзя уйти оффлайн, пока есть активный заказ.');
       return;
     }
@@ -211,57 +186,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     try {
       if (next) {
-        final permission = await _locationService.ensurePermission();
+        final permission = await _location.ensurePermission();
+
         if (!permission.allowed) {
           _showSnackBar(permission.message);
           return;
         }
 
         await _api.setOnline(true);
-        final tracking = await _locationService.startTracking();
+        final tracking = await _location.startTracking();
 
         if (!tracking.started) {
-          await _api.setOnline(false).catchError((_) {});
+          try {
+            await _api.setOnline(false);
+          } catch (_) {
+            // Best effort rollback; the next bootstrap reconciles presence.
+          }
           _showSnackBar(tracking.message);
           return;
         }
 
-        if (!mounted) return;
-        setState(() => isOnline = true);
+        if (mounted) setState(() => _isOnline = true);
         _showSnackBar('Вы на линии. Геолокация активна.');
       } else {
         await _api.setOnline(false);
-        await _locationService.stopTracking();
+        await _location.stopTracking();
 
-        if (!mounted) return;
-        setState(() => isOnline = false);
+        if (mounted) setState(() => _isOnline = false);
         _showSnackBar('Вы оффлайн.');
       }
-    } catch (e) {
-      if (next) {
-        await _locationService.stopTracking();
-      }
-      _showSnackBar(_humanizeError(e));
+    } catch (error) {
+      if (next) await _location.stopTracking();
+      _showSnackBar(_humanizeError(error));
     } finally {
       if (mounted) setState(() => _changingOnline = false);
     }
   }
 
   Future<void> _openActiveOrder() async {
-    final id = _string(activeOrder?['id']);
+    final id = _text(_activeOrder?['id']);
     if (id.isEmpty) return;
 
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: id)),
     );
 
-    if (mounted) await _refresh(silent: true);
-  }
-
-  void _openNotifications() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const NotificationsPage()),
-    );
+    if (mounted) await _load(silent: true);
   }
 
   void _onBottomBarTap(int index) {
@@ -280,23 +250,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   String _humanizeError(Object error) {
+    if (error is FormatException) {
+      return 'Сервер вернул некорректные данные. Попробуйте обновить экран.';
+    }
+
     if (error is ApiException) {
       switch (error.kind) {
         case ApiErrorKind.network:
           return 'Нет соединения с сервером. Проверьте интернет.';
         case ApiErrorKind.timeout:
-          return 'Сервер не ответил вовремя. Попробуйте ещё раз.';
-        case ApiErrorKind.forbidden:
-          return 'Действие недоступно для этого аккаунта.';
+          return 'Сервер не ответил вовремя.';
         case ApiErrorKind.sessionExpired:
         case ApiErrorKind.unauthorized:
           return 'Сессия истекла. Войдите заново.';
+        case ApiErrorKind.forbidden:
+          return 'Действие недоступно для этого аккаунта.';
         default:
-          return 'Не удалось обновить данные. Попробуйте ещё раз.';
+          return 'Не удалось обновить данные.';
       }
     }
 
-    return 'Не удалось выполнить действие. Попробуйте ещё раз.';
+    return 'Не удалось выполнить действие.';
   }
 
   void _showSnackBar(String message) {
@@ -306,23 +280,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String get _todayText {
-    final now = DateTime.now();
-    const months = [
-      '', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-    ];
-    return '${now.day} ${months[now.month]}';
-  }
-
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFFF8F8FA);
-    const green = Color(0xFF3FAE2A);
-    const darkGreen = Color(0xFF2F8731);
-
     return Scaffold(
-      backgroundColor: bg,
       bottomNavigationBar: CourierBottomBar(
         currentIndex: 0,
         onTap: _onBottomBarTap,
@@ -331,132 +291,73 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
-                onRefresh: _refresh,
+                onRefresh: () => _load(silent: true),
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Привет, $courierName',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 25,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.black,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Сегодня: $_todayText',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: Color(0xFF667085),
-                                ),
-                              ),
-                            ],
+                    _HomeHeader(
+                      name: _courierName,
+                      unreadCount: _unreadCount,
+                      onNotifications: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const NotificationsPage(),
                           ),
-                        ),
-                        Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            IconButton.filledTonal(
-                              onPressed: _openNotifications,
-                              icon: const Icon(Icons.notifications_none_rounded),
-                            ),
-                            if (unreadCount > 0)
-                              Positioned(
-                                right: -2,
-                                top: -3,
-                                child: Container(
-                                  constraints: const BoxConstraints(minWidth: 20),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFDC2626),
-                                    borderRadius: BorderRadius.circular(999),
-                                    border: Border.all(color: bg, width: 2),
-                                  ),
-                                  child: Text(
-                                    unreadCount > 99 ? '99+' : '$unreadCount',
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
+                        );
+                      },
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 16),
                     _OnlineCard(
-                      isOnline: isOnline,
+                      isOnline: _isOnline,
                       loading: _changingOnline,
                       onTap: _toggleOnline,
                     ),
-                    if (error.isNotEmpty) ...[
+                    if (_error != null) ...[
                       const SizedBox(height: 12),
-                      _ErrorBanner(message: error),
+                      _ErrorBanner(message: _error!),
                     ],
-                    const SizedBox(height: 18),
-                    if (activeOrder != null) ...[
+                    if (_activeOrder != null) ...[
+                      const SizedBox(height: 18),
                       _ActiveOrderCard(
-                        order: activeOrder!,
+                        order: _activeOrder!,
                         onOpen: _openActiveOrder,
                       ),
-                      const SizedBox(height: 20),
                     ],
+                    const SizedBox(height: 20),
                     const Text(
-                      'Статистика за сегодня',
+                      'Сегодня',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
-                        color: Colors.black,
                       ),
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
-                          child: _StatCard(
-                            icon: Icons.receipt_long_outlined,
-                            value: '$todayOrders',
+                          child: _MetricCard(
                             label: 'Заказов',
-                            accent: green,
+                            value: '$_todayOrders',
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _StatCard(
-                            icon: Icons.check_circle_outline_rounded,
-                            value: '$todayCompleted',
+                          child: _MetricCard(
                             label: 'Доставлено',
-                            accent: darkGreen,
+                            value: '$_todayCompleted',
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 10),
-                    _IncomeCard(amount: todayEarnings),
+                    _IncomeCard(amount: _todayEarnings),
                     if (_refreshing) ...[
                       const SizedBox(height: 18),
                       const Center(
                         child: SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 18,
+                          height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
@@ -479,17 +380,20 @@ class _CourierHomeApi {
   }
 
   Future<Map<String, dynamic>?> getActiveOrder() async {
-    final data = await _client.get('/orders/courier/active');
-    if (data == null) return null;
+    final raw = _asMap(await _client.get('/orders/courier/active'));
+    if (raw.isEmpty) return null;
 
-    final map = _asMap(data);
-    if (map.isEmpty) return null;
-    return map;
+    final wrapped = _map(raw['activeOrder']);
+    if (wrapped != null) return wrapped;
+
+    // Backward compatibility for an older backend that returned the order
+    // directly instead of { activeOrder, activeOrders }.
+    return _text(raw['id']).isEmpty ? null : raw;
   }
 
   Future<int> getUnreadCount() async {
-    final data = _asMap(await _client.get('/notifications/unread-count'));
-    return _int(data['count']) ?? _int(data['unreadCount']) ?? 0;
+    final raw = _asMap(await _client.get('/notifications/unread-count'));
+    return _int(raw['count']) ?? _int(raw['unreadCount']) ?? 0;
   }
 
   Future<void> setOnline(bool value) async {
@@ -497,25 +401,29 @@ class _CourierHomeApi {
   }
 
   Future<_HomeTodayStats> getTodayStats() async {
-    final data = await _client.get('/orders/courier/my?page=1&limit=100');
-    final map = _asMap(data);
-    final items = (map['items'] is List ? map['items'] as List : const <dynamic>[])
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e));
-
+    final raw = _asMap(
+      await _client.get('/orders/courier/my?page=1&limit=100'),
+    );
+    final values = raw['items'] is List ? raw['items'] as List : const <dynamic>[];
     final today = DateTime.now();
     var orders = 0;
     var completed = 0;
     var earnings = 0;
 
-    for (final order in items) {
-      final assignedAt = DateTime.tryParse(_string(order['assignedAt']));
-      final createdAt = DateTime.tryParse(_string(order['createdAt']));
-      final deliveredAt = DateTime.tryParse(_string(order['deliveredAt']));
-      final status = _string(order['status']).toUpperCase();
+    for (final value in values.whereType<Map>()) {
+      final order = Map<String, dynamic>.from(value);
 
-      final base = assignedAt ?? createdAt;
-      if (base != null && _sameDay(base.toLocal(), today)) {
+      if (_text(order['fulfillmentType']).toUpperCase() == 'PICKUP') {
+        continue;
+      }
+
+      final assignedAt = DateTime.tryParse(_text(order['assignedAt']));
+      final createdAt = DateTime.tryParse(_text(order['createdAt']));
+      final deliveredAt = DateTime.tryParse(_text(order['deliveredAt']));
+      final status = _text(order['status']).toUpperCase();
+
+      final start = assignedAt ?? createdAt;
+      if (start != null && _sameDay(start.toLocal(), today)) {
         orders++;
       }
 
@@ -523,33 +431,107 @@ class _CourierHomeApi {
           deliveredAt != null &&
           _sameDay(deliveredAt.toLocal(), today)) {
         completed++;
-        final net = _int(order['courierFee']);
         final gross = _int(order['courierFeeGross']) ?? 0;
         final commission = _int(order['courierCommissionAmount']) ?? 0;
-        earnings += net ?? (gross - commission).clamp(0, 1 << 31);
+        final fallbackNet = (gross - commission).clamp(0, 1 << 31).toInt();
+        earnings += _int(order['courierFee']) ?? fallbackNet;
       }
     }
 
     return _HomeTodayStats(
       orders: orders,
-      earnings: earnings,
       completed: completed,
+      earnings: earnings,
     );
   }
-
-  void dispose() => _client.dispose();
 }
 
 class _HomeTodayStats {
   const _HomeTodayStats({
     required this.orders,
-    required this.earnings,
     required this.completed,
+    required this.earnings,
   });
 
   final int orders;
-  final int earnings;
   final int completed;
+  final int earnings;
+}
+
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({
+    required this.name,
+    required this.unreadCount,
+    required this.onNotifications,
+  });
+
+  final String name;
+  final int unreadCount;
+  final VoidCallback onNotifications;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Привет, $name',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 25,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Рабочая смена JETKIZ',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF667085),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton.filledTonal(
+              onPressed: onNotifications,
+              icon: const Icon(Icons.notifications_none_rounded),
+            ),
+            if (unreadCount > 0)
+              Positioned(
+                right: -4,
+                top: -4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDC2626),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    unreadCount > 99 ? '99+' : '$unreadCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class _OnlineCard extends StatelessWidget {
@@ -565,46 +547,36 @@ class _OnlineCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = isOnline
-        ? const Color(0xFF2F8731)
-        : const Color(0xFFEDEFF2);
-    final foreground = isOnline ? Colors.white : const Color(0xFF475467);
+    final background = isOnline ? const Color(0xFF2F8731) : Colors.white;
+    final foreground = isOnline ? Colors.white : const Color(0xFF344054);
 
     return Material(
       color: background,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: loading ? null : onTap,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+          padding: const EdgeInsets.all(17),
           child: Row(
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: isOnline
-                      ? Colors.white.withValues(alpha: 0.16)
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(14),
+              if (loading)
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: foreground,
+                  ),
+                )
+              else
+                Icon(
+                  isOnline
+                      ? Icons.location_on_rounded
+                      : Icons.location_off_outlined,
+                  color: foreground,
                 ),
-                child: loading
-                    ? Padding(
-                        padding: const EdgeInsets.all(11),
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: foreground,
-                        ),
-                      )
-                    : Icon(
-                        isOnline
-                            ? Icons.location_on_rounded
-                            : Icons.location_off_outlined,
-                        color: foreground,
-                      ),
-              ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 13),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,7 +584,7 @@ class _OnlineCard extends StatelessWidget {
                     Text(
                       isOnline ? 'Вы на линии' : 'Вы оффлайн',
                       style: TextStyle(
-                        fontSize: 19,
+                        fontSize: 18,
                         fontWeight: FontWeight.w800,
                         color: foreground,
                       ),
@@ -620,18 +592,16 @@ class _OnlineCard extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       isOnline
-                          ? 'GPS работает для назначения и доставки'
+                          ? 'GPS активен для назначения и доставки'
                           : 'Выйдите на линию, чтобы получать заказы',
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: foreground.withValues(alpha: 0.82),
+                        color: foreground.withValues(alpha: 0.75),
                       ),
                     ),
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: foreground),
             ],
           ),
         ),
@@ -648,18 +618,17 @@ class _ActiveOrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final number = _string(order['number']);
-    final status = _statusLabel(_string(order['status']));
-    final restaurant = _string(order['restaurantName']);
-    final restaurantAddress = _string(order['restaurantAddress']);
-    final clientAddress = _string(order['clientAddress']);
-    final payout = _int(order['courierPayout']) ?? 0;
+    final number = _text(order['number']);
+    final restaurant = _text(order['restaurantName']);
+    final clientAddress = _text(order['clientAddress']);
+    final status = _statusLabel(_text(order['status']));
+    final income = _int(order['courierPayout']) ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Column(
@@ -676,63 +645,47 @@ class _ActiveOrderCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEEF4FF),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  status,
-                  style: const TextStyle(
-                    color: Color(0xFF175CD3),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
+              Text(
+                status,
+                style: const TextStyle(
+                  color: Color(0xFF175CD3),
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          _Line(icon: Icons.storefront_outlined, text: restaurant),
-          if (restaurantAddress.isNotEmpty) ...[
-            const SizedBox(height: 7),
-            _Line(icon: Icons.pin_drop_outlined, text: restaurantAddress),
+          if (restaurant.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              restaurant,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
           ],
           if (clientAddress.isNotEmpty) ...[
-            const SizedBox(height: 7),
-            _Line(icon: Icons.flag_outlined, text: clientAddress),
+            const SizedBox(height: 6),
+            Text(
+              clientAddress,
+              style: const TextStyle(color: Color(0xFF667085)),
+            ),
           ],
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Ваш доход: ${_money(payout)} ₸',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF2F8731),
-                  ),
-                ),
-              ),
-            ],
+          const SizedBox(height: 12),
+          Text(
+            'Ваш доход: ${_formatMoney(income)} ₸',
+            style: const TextStyle(
+              color: Color(0xFF2F8731),
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            height: 54,
+            height: 52,
             child: FilledButton(
               onPressed: onOpen,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF2F8731),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
               child: const Text(
                 'Открыть заказ',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -742,47 +695,11 @@ class _ActiveOrderCard extends StatelessWidget {
   }
 }
 
-class _Line extends StatelessWidget {
-  const _Line({required this.icon, required this.text});
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.label, required this.value});
 
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: const Color(0xFF667085)),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            text.isEmpty ? '—' : text,
-            style: const TextStyle(
-              fontSize: 14,
-              height: 1.3,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF344054),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.icon,
-    required this.value,
-    required this.label,
-    required this.accent,
-  });
-
-  final IconData icon;
-  final String value;
   final String label;
-  final Color accent;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
@@ -796,20 +713,17 @@ class _StatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: accent),
-          const SizedBox(height: 12),
           Text(
             value,
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF667085),
-            ),
+            style: const TextStyle(color: Color(0xFF667085)),
           ),
         ],
       ),
@@ -825,7 +739,7 @@ class _IncomeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(17),
       decoration: BoxDecoration(
         color: const Color(0xFFF0F9EE),
         borderRadius: BorderRadius.circular(18),
@@ -833,20 +747,18 @@ class _IncomeCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.payments_outlined, color: Color(0xFF2F8731)),
-          const SizedBox(width: 12),
           const Expanded(
             child: Text(
               'Заработано сегодня',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              style: TextStyle(fontWeight: FontWeight.w700),
             ),
           ),
           Text(
-            '${_money(amount)} ₸',
+            '${_formatMoney(amount)} ₸',
             style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
               color: Color(0xFF2F8731),
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],
@@ -874,7 +786,6 @@ class _ErrorBanner extends StatelessWidget {
         textAlign: TextAlign.center,
         style: const TextStyle(
           color: Color(0xFFB42318),
-          fontSize: 13,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -885,10 +796,7 @@ class _ErrorBanner extends StatelessWidget {
 Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
   if (raw == null || raw.isEmpty) return null;
 
-  final fulfillmentType = _string(raw['fulfillmentType']).toUpperCase();
-  if (fulfillmentType == 'PICKUP') {
-    // Pickup is never a courier job. Ignore defensively even if stale data
-    // exists on the backend.
+  if (_text(raw['fulfillmentType']).toUpperCase() == 'PICKUP') {
     return null;
   }
 
@@ -896,20 +804,20 @@ Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
   final address = _map(raw['address']);
   final gross = _int(raw['courierFeeGross']) ?? 0;
   final commission = _int(raw['courierCommissionAmount']) ?? 0;
-  final net = _int(raw['courierFee']) ?? (gross - commission).clamp(0, 1 << 31);
+  final payout = _int(raw['courierFee']) ??
+      (gross - commission).clamp(0, 1 << 31).toInt();
 
   return <String, dynamic>{
-    'id': _string(raw['id']),
-    'number': _string(raw['number']),
-    'status': _string(raw['status']),
-    'restaurantName': _string(restaurant?['nameRu']).isNotEmpty
-        ? _string(restaurant?['nameRu'])
-        : _string(raw['restaurantName']),
-    'restaurantAddress': _string(restaurant?['address']).isNotEmpty
-        ? _string(restaurant?['address'])
-        : _string(raw['restaurantAddress']),
+    'id': _text(raw['id']),
+    'number': _text(raw['number']),
+    'status': _text(raw['status']),
+    'restaurantName': _firstText([
+      restaurant?['nameRu'],
+      restaurant?['name'],
+      raw['restaurantName'],
+    ]),
     'clientAddress': _buildAddress(address, raw),
-    'courierPayout': net,
+    'courierPayout': payout,
   };
 }
 
@@ -917,17 +825,20 @@ String _buildAddress(
   Map<String, dynamic>? address,
   Map<String, dynamic> raw,
 ) {
-  final direct = _string(raw['clientAddress']);
+  final direct = _firstText([
+    raw['clientAddress'],
+    raw['deliveryAddress'],
+    raw['deliveryAddressText'],
+  ]);
+
   if (direct.isNotEmpty) return direct;
   if (address == null) return '';
 
-  final main = _string(address['address']).isNotEmpty
-      ? _string(address['address'])
-      : _string(address['title']);
-  final entrance = _string(address['entrance']);
-  final floor = _string(address['floor']);
-  final door = _string(address['door']);
-  final intercom = _string(address['intercom']);
+  final main = _firstText([address['address'], address['title']]);
+  final entrance = _text(address['entrance']);
+  final floor = _text(address['floor']);
+  final door = _text(address['door']);
+  final intercom = _text(address['intercom']);
 
   return <String>[
     if (main.isNotEmpty) main,
@@ -950,38 +861,46 @@ Map<String, dynamic>? _map(dynamic value) {
   return null;
 }
 
-String _string(dynamic value) => value?.toString().trim() ?? '';
+String _text(dynamic value) => value?.toString().trim() ?? '';
 
-bool _bool(dynamic value) {
-  if (value is bool) return value;
-  final text = _string(value).toLowerCase();
-  return text == 'true' || text == '1';
+String _firstText(List<dynamic> values) {
+  for (final value in values) {
+    final text = _text(value);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
 }
 
 int? _int(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.round();
-  return int.tryParse(_string(value));
+  return int.tryParse(_text(value));
+}
+
+bool _bool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = _text(value).toLowerCase();
+  return text == 'true' || text == '1';
 }
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
-String _money(int value) {
-  final negative = value < 0;
+String _formatMoney(int value) {
   final digits = value.abs().toString();
-  final out = StringBuffer();
+  final output = StringBuffer();
 
   for (var i = 0; i < digits.length; i++) {
-    if (i > 0 && (digits.length - i) % 3 == 0) out.write(' ');
-    out.write(digits[i]);
+    if (i > 0 && (digits.length - i) % 3 == 0) output.write(' ');
+    output.write(digits[i]);
   }
 
-  return '${negative ? '-' : ''}$out';
+  return '${value < 0 ? '-' : ''}$output';
 }
 
-String _statusLabel(String raw) {
-  switch (raw.toUpperCase()) {
+String _statusLabel(String value) {
+  switch (value.toUpperCase()) {
     case 'ACCEPTED':
       return 'Принят';
     case 'COOKING':
