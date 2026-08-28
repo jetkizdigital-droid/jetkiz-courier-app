@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_item.dart';
 
@@ -6,66 +8,65 @@ class CourierOrdersApi {
 
   final ApiClient _apiClient;
 
-  /// Текущие/мои заказы курьера.
-  ///
-  /// Backend contract:
-  /// GET /orders/courier/my?page=&limit=&status=
-  ///
-  /// Важно: from/to сюда НЕ отправляем, потому что backend controller
-  /// для /orders/courier/my их не принимает как официальный контракт.
   Future<List<CourierOrderItem>> getCourierOrders({
     int page = 1,
     int limit = 100,
     String? status,
     String? from,
     String? to,
-  }) async {
-    final query = <String, String>{
-      'page': '$page',
-      'limit': '$limit',
-    };
-
-    final normalizedStatus = (status ?? '').trim();
-    if (normalizedStatus.isNotEmpty) {
-      query['status'] = normalizedStatus;
-    }
-
-    final dynamic response = await _apiClient.get(
-      _buildPath('/orders/courier/my', query),
+  }) {
+    return _loadPaged(
+      '/orders/courier/my',
+      page: page,
+      limit: limit,
+      status: status,
     );
-
-    return _parseOrderList(response);
   }
 
-  /// История заказов курьера.
-  ///
-  /// Backend contract:
-  /// GET /orders/courier/history?page=&limit=&status=
-  ///
-  /// from/to пока оставлены в сигнатуре, чтобы не ломать UI-вызовы,
-  /// но в request не отправляются, пока backend-контракт не зафиксирован.
   Future<List<CourierOrderItem>> getCourierHistory({
     int page = 1,
     int limit = 100,
     String? status,
     String? from,
     String? to,
-  }) async {
-    final query = <String, String>{
-      'page': '$page',
-      'limit': '$limit',
-    };
+  }) {
+    return _loadPaged(
+      '/orders/courier/history',
+      page: page,
+      limit: limit,
+      status: status,
+    );
+  }
 
-    final normalizedStatus = (status ?? '').trim();
-    if (normalizedStatus.isNotEmpty) {
-      query['status'] = normalizedStatus;
+  Future<List<CourierOrderItem>> _loadPaged(
+    String endpoint, {
+    required int page,
+    required int limit,
+    String? status,
+  }) async {
+    final requested = limit.clamp(1, 1000);
+    final items = <CourierOrderItem>[];
+    var currentPage = math.max(1, page);
+
+    while (items.length < requested) {
+      final pageSize = math.min(100, requested - items.length);
+      final query = <String, String>{
+        'page': '$currentPage',
+        'limit': '$pageSize',
+      };
+
+      final normalizedStatus = (status ?? '').trim();
+      if (normalizedStatus.isNotEmpty) query['status'] = normalizedStatus;
+
+      final response = await _apiClient.get(_buildPath(endpoint, query));
+      final pageItems = _parseOrderList(response);
+      items.addAll(pageItems);
+
+      if (pageItems.length < pageSize) break;
+      currentPage++;
     }
 
-    final dynamic response = await _apiClient.get(
-      _buildPath('/orders/courier/history', query),
-    );
-
-    return _parseOrderList(response);
+    return items.take(requested).toList(growable: false);
   }
 
   Future<CourierOrderItem?> getActiveOrder() async {
@@ -73,27 +74,16 @@ class CourierOrdersApi {
 
     if (response == null) return null;
 
-    if (response is Map<String, dynamic>) {
-      if (response.isEmpty) return null;
+    final map = _asMap(response);
+    if (map.isEmpty) return null;
 
-      final wrapped =
-          _readMap(response, const ['item']) ??
-          _readMap(response, const ['data']) ??
-          response;
+    final wrapped =
+        _readMap(map, const ['item']) ??
+        _readMap(map, const ['data']) ??
+        map;
 
-      if (wrapped.isEmpty) return null;
-
-      return CourierOrderItem.fromJson(wrapped);
-    }
-
-    if (response is Map) {
-      final mapped = Map<String, dynamic>.from(response);
-      if (mapped.isEmpty) return null;
-
-      return CourierOrderItem.fromJson(mapped);
-    }
-
-    return null;
+    if (wrapped.isEmpty || _isPickup(wrapped)) return null;
+    return CourierOrderItem.fromJson(wrapped);
   }
 
   List<CourierOrderItem> _parseOrderList(dynamic response) {
@@ -106,19 +96,28 @@ class CourierOrdersApi {
 
     return itemsRaw
         .whereType<Map>()
-        .map((item) => CourierOrderItem.fromJson(Map<String, dynamic>.from(item)))
-        .toList();
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((item) => !_isPickup(item))
+        .map(CourierOrderItem.fromJson)
+        .toList(growable: false);
+  }
+
+  bool _isPickup(Map<String, dynamic> item) {
+    return (item['fulfillmentType'] ?? '')
+            .toString()
+            .trim()
+            .toUpperCase() ==
+        'PICKUP';
   }
 
   String _buildPath(String basePath, Map<String, String> query) {
-    if (query.isEmpty) return basePath;
+    return Uri(path: basePath, queryParameters: query).toString();
+  }
 
-    final uri = Uri(
-      path: basePath,
-      queryParameters: query,
-    );
-
-    return uri.toString();
+  static Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
   }
 
   static List<dynamic>? _extractList(dynamic json, List<String> path) {
@@ -137,7 +136,10 @@ class CourierOrdersApi {
     return current is List ? current : null;
   }
 
-  static Map<String, dynamic>? _readMap(dynamic json, List<String> path) {
+  static Map<String, dynamic>? _readMap(
+    Map<String, dynamic> json,
+    List<String> path,
+  ) {
     dynamic current = json;
 
     for (final part in path) {
@@ -152,7 +154,6 @@ class CourierOrdersApi {
 
     if (current is Map<String, dynamic>) return current;
     if (current is Map) return Map<String, dynamic>.from(current);
-
     return null;
   }
 }
