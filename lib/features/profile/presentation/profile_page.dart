@@ -24,33 +24,35 @@ class _ProfilePageState extends State<ProfilePage> {
   static final Uri _offerUri = Uri.parse('https://jetkiz.asia/offer');
   static final Uri _privacyUri = Uri.parse('https://jetkiz.asia/privacy');
 
+  late final ApiClient _client;
   late final _CourierProfileApi _api;
-  late final LogoutService _logoutService;
-  final ImagePicker _imagePicker = ImagePicker();
+  late final LogoutService _logout;
+  final ImagePicker _picker = ImagePicker();
 
   bool _loading = true;
-  bool _uploadingPhoto = false;
+  bool _uploading = false;
   bool _loggingOut = false;
   String? _error;
-  String _fullName = 'Курьер';
+  String _name = 'Курьер';
   String? _avatarUrl;
-  bool _isOnline = false;
+  bool _online = false;
   int _ordersCount = 0;
   String _version = '—';
 
   @override
   void initState() {
     super.initState();
-    _api = _CourierProfileApi(ApiClient());
-    _logoutService = LogoutService();
+    _client = ApiClient();
+    _api = _CourierProfileApi(_client);
+    _logout = LogoutService();
     unawaited(_loadProfile());
     unawaited(_loadVersion());
   }
 
   @override
   void dispose() {
-    _api.dispose();
-    unawaited(_logoutService.dispose());
+    _client.dispose();
+    unawaited(_logout.dispose());
     super.dispose();
   }
 
@@ -64,140 +66,125 @@ class _ProfilePageState extends State<ProfilePage> {
             : '${info.version} (${info.buildNumber})';
       });
     } catch (_) {
-      // Version is informational only.
+      // Informational only.
     }
   }
 
   Future<void> _loadProfile() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
 
     try {
       final me = await _api.getMe();
-
       if (!mounted) return;
+
       setState(() {
-        _fullName = [me.firstName, me.lastName]
-            .where((value) => value.trim().isNotEmpty)
-            .join(' ');
-        if (_fullName.isEmpty) _fullName = 'Курьер';
+        final fullName = [
+          me.firstName,
+          me.lastName,
+        ].where((value) => value.trim().isNotEmpty).join(' ');
+        _name = fullName.isEmpty ? 'Курьер' : fullName;
         _avatarUrl = me.avatarUrl;
-        _isOnline = me.isOnline;
+        _online = me.isOnline;
         _ordersCount = me.ordersCount;
       });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = _humanizeError(e));
+    } catch (error) {
+      if (mounted) setState(() => _error = _humanizeError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _pickAndUploadPhoto() async {
-    if (_uploadingPhoto) return;
+  Future<void> _pickAvatar() async {
+    if (_uploading) return;
 
     try {
-      final picked = await _imagePicker.pickImage(
+      final picked = await _picker.pickImage(
         source: ImageSource.gallery,
         imageQuality: 88,
         maxWidth: 1600,
         maxHeight: 1600,
       );
-
       if (picked == null) return;
-      _assertSupportedImage(picked.path);
 
-      setState(() => _uploadingPhoto = true);
+      final lower = picked.path.toLowerCase();
+      if (!(lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.webp'))) {
+        _showSnackBar('Выберите изображение JPG, PNG или WEBP.');
+        return;
+      }
+
+      setState(() => _uploading = true);
       final avatarUrl = await _api.uploadAvatar(File(picked.path));
 
       if (!mounted) return;
       setState(() => _avatarUrl = avatarUrl);
       _showSnackBar('Фото обновлено');
-    } on _AvatarFormatException catch (e) {
-      _showSnackBar(e.message);
-    } catch (e) {
-      _showSnackBar(_humanizeError(e));
+    } catch (error) {
+      _showSnackBar(_humanizeError(error));
     } finally {
-      if (mounted) setState(() => _uploadingPhoto = false);
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
-  void _assertSupportedImage(String path) {
-    final lower = path.toLowerCase();
-    final supported = lower.endsWith('.jpg') ||
-        lower.endsWith('.jpeg') ||
-        lower.endsWith('.png') ||
-        lower.endsWith('.webp');
-
-    if (!supported) {
-      throw const _AvatarFormatException(
-        'Выберите изображение JPG, PNG или WEBP.',
-      );
-    }
-  }
-
-  Future<void> _logout() async {
+  Future<void> _logoutAccount() async {
     if (_loggingOut) return;
-
     setState(() => _loggingOut = true);
 
     try {
-      final hasActiveOrder = await _api.hasActiveOrder();
-
-      if (hasActiveOrder) {
+      if (await _api.hasActiveDelivery()) {
         _showSnackBar('Сначала завершите активную доставку, затем выйдите.');
         return;
       }
 
-      final confirmed = await _confirmLogout();
-      if (!confirmed) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Выйти из аккаунта?'),
+          content: const Text(
+            'Статус станет оффлайн, а геолокация и push-регистрация этого устройства будут остановлены.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Выйти'),
+            ),
+          ],
+        ),
+      );
 
-      await _logoutService.logout();
+      if (confirmed != true) return;
+
+      await _logout.logout();
 
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const AuthGate()),
         (route) => false,
       );
-    } catch (e) {
-      _showSnackBar(_humanizeError(e));
+    } catch (error) {
+      _showSnackBar(_humanizeError(error));
     } finally {
       if (mounted) setState(() => _loggingOut = false);
     }
   }
 
-  Future<bool> _confirmLogout() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Выйти из аккаунта?'),
-        content: const Text(
-          'Статус курьера станет оффлайн, геолокация и push-регистрация этого устройства будут остановлены.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Выйти'),
-          ),
-        ],
-      ),
-    );
-
-    return result == true;
-  }
-
-  Future<void> _openExternal(Uri uri) async {
+  Future<void> _open(Uri uri) async {
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened) _showSnackBar('Не удалось открыть страницу.');
   }
 
-  void _onBottomBarTap(int index) {
+  void _navigateBottom(int index) {
     if (index == 3) return;
 
     final Widget page = switch (index) {
@@ -218,18 +205,17 @@ class _ProfilePageState extends State<ProfilePage> {
         case ApiErrorKind.network:
           return 'Нет соединения с сервером. Проверьте интернет.';
         case ApiErrorKind.timeout:
-          return 'Сервер не ответил вовремя. Попробуйте ещё раз.';
+          return 'Сервер не ответил вовремя.';
         case ApiErrorKind.sessionExpired:
         case ApiErrorKind.unauthorized:
           return 'Сессия истекла. Войдите заново.';
         case ApiErrorKind.forbidden:
           return 'Действие недоступно для этого аккаунта.';
         default:
-          return 'Не удалось выполнить действие. Попробуйте ещё раз.';
+          return 'Не удалось выполнить действие.';
       }
     }
-
-    return 'Не удалось выполнить действие. Попробуйте ещё раз.';
+    return 'Не удалось выполнить действие.';
   }
 
   void _showSnackBar(String message) {
@@ -241,19 +227,16 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFFF8F8FA);
-
     return Scaffold(
-      backgroundColor: bg,
       bottomNavigationBar: CourierBottomBar(
         currentIndex: 3,
-        onTap: _onBottomBarTap,
+        onTap: _navigateBottom,
       ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
-            ? _ErrorState(message: _error!, onRetry: _loadProfile)
+            ? _ProfileError(message: _error!, onRetry: _loadProfile)
             : RefreshIndicator(
                 onRefresh: _loadProfile,
                 child: ListView(
@@ -265,66 +248,63 @@ class _ProfilePageState extends State<ProfilePage> {
                       style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w800,
-                        color: Colors.black,
                       ),
                     ),
                     const SizedBox(height: 18),
-                    _ProfileHeaderCard(
-                      fullName: _fullName,
+                    _ProfileHeader(
+                      name: _name,
                       avatarUrl: _avatarUrl,
-                      isOnline: _isOnline,
-                      uploadingPhoto: _uploadingPhoto,
-                      onPhotoTap: _pickAndUploadPhoto,
+                      online: _online,
+                      uploading: _uploading,
+                      onAvatar: _pickAvatar,
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
-                          child: _MetricCard(
-                            title: 'Заказы',
+                          child: _Metric(
+                            label: 'Заказы',
                             value: '$_ordersCount',
-                            icon: Icons.receipt_long_outlined,
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _MetricCard(
-                            title: 'Статус',
-                            value: _isOnline ? 'Онлайн' : 'Оффлайн',
-                            icon: Icons.wifi_tethering_rounded,
+                          child: _Metric(
+                            label: 'Статус',
+                            value: _online ? 'Онлайн' : 'Оффлайн',
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 18),
-                    const _SectionTitle('Документы'),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Документы',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: 10),
-                    _MenuTile(
+                    _LinkTile(
+                      icon: Icons.description_outlined,
                       title: 'Пользовательское соглашение',
                       subtitle: 'jetkiz.asia/offer',
-                      icon: Icons.description_outlined,
-                      onTap: () => _openExternal(_offerUri),
+                      onTap: () => _open(_offerUri),
                     ),
                     const SizedBox(height: 10),
-                    _MenuTile(
+                    _LinkTile(
+                      icon: Icons.privacy_tip_outlined,
                       title: 'Политика конфиденциальности',
                       subtitle: 'jetkiz.asia/privacy',
-                      icon: Icons.privacy_tip_outlined,
-                      onTap: () => _openExternal(_privacyUri),
+                      onTap: () => _open(_privacyUri),
                     ),
-                    const SizedBox(height: 18),
-                    const _SectionTitle('Приложение'),
-                    const SizedBox(height: 10),
-                    _InfoTile(
-                      title: 'JETKIZ Курьер',
-                      subtitle: 'Версия $_version',
-                      icon: Icons.info_outline_rounded,
-                    ),
+                    const SizedBox(height: 20),
+                    _InfoTile(version: _version),
                     const SizedBox(height: 22),
                     SizedBox(
                       height: 56,
                       child: OutlinedButton.icon(
-                        onPressed: _loggingOut ? null : _logout,
+                        onPressed: _loggingOut ? null : _logoutAccount,
                         icon: _loggingOut
                             ? const SizedBox(
                                 width: 18,
@@ -360,38 +340,36 @@ class _CourierProfileApi {
 
   Future<_CourierMe> getMe() async {
     final json = _asMap(await _client.get('/couriers/me'));
-    final profile = _asNullableMap(json['courierProfile']);
+    final profile = _map(json['courierProfile']) ?? _map(json['profile']);
 
     return _CourierMe(
-      firstName: _firstNonEmpty([
-            json['firstName'],
-            profile?['firstName'],
-          ]) ??
-          '',
-      lastName: _firstNonEmpty([
-            json['lastName'],
-            profile?['lastName'],
-          ]) ??
-          '',
+      firstName: _firstText([
+        json['firstName'],
+        profile?['firstName'],
+      ]),
+      lastName: _firstText([
+        json['lastName'],
+        profile?['lastName'],
+      ]),
       avatarUrl: _normalizeImageUrl(
-        _firstNonEmpty([json['avatarUrl'], profile?['avatarUrl']]),
+        _firstText([json['avatarUrl'], profile?['avatarUrl']]),
       ),
       isOnline: _bool(json['isOnline']) || _bool(profile?['isOnline']),
       ordersCount: _int(json['ordersCount']) ??
-          _int(_asNullableMap(json['stats'])?['completedOrders']) ??
+          _int(_map(json['stats'])?['completedOrders']) ??
           0,
     );
   }
 
-  Future<bool> hasActiveOrder() async {
-    final response = await _client.get('/orders/courier/active');
-    if (response == null) return false;
-    final map = _asMap(response);
-    if (map.isEmpty) return false;
-    return (map['fulfillmentType'] ?? 'DELIVERY')
-            .toString()
-            .toUpperCase() !=
-        'PICKUP';
+  Future<bool> hasActiveDelivery() async {
+    final raw = _asMap(await _client.get('/orders/courier/active'));
+    if (raw.isEmpty) return false;
+
+    final active = _map(raw['activeOrder']);
+    final order = active ?? (_text(raw['id']).isNotEmpty ? raw : null);
+    if (order == null) return false;
+
+    return _text(order['fulfillmentType']).toUpperCase() != 'PICKUP';
   }
 
   Future<String?> uploadAvatar(File file) async {
@@ -403,50 +381,15 @@ class _CourierProfileApi {
       ),
     );
 
-    return _normalizeImageUrl(_firstNonEmpty([response['avatarUrl']]));
+    return _normalizeImageUrl(_firstText([response['avatarUrl']]));
   }
 
-  String? _normalizeImageUrl(String? value) {
-    final raw = value?.trim() ?? '';
+  String? _normalizeImageUrl(String value) {
+    final raw = value.trim();
     if (raw.isEmpty) return null;
     if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
     return '${ApiClient.baseUrl}${raw.startsWith('/') ? raw : '/$raw'}';
   }
-
-  static Map<String, dynamic> _asMap(dynamic value) {
-    if (value is Map<String, dynamic>) return value;
-    if (value is Map) return Map<String, dynamic>.from(value);
-    return <String, dynamic>{};
-  }
-
-  static Map<String, dynamic>? _asNullableMap(dynamic value) {
-    if (value is Map<String, dynamic>) return value;
-    if (value is Map) return Map<String, dynamic>.from(value);
-    return null;
-  }
-
-  static String? _firstNonEmpty(List<dynamic> values) {
-    for (final value in values) {
-      final text = value?.toString().trim() ?? '';
-      if (text.isNotEmpty) return text;
-    }
-    return null;
-  }
-
-  static int? _int(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.round();
-    return int.tryParse(value?.toString() ?? '');
-  }
-
-  static bool _bool(dynamic value) {
-    if (value is bool) return value;
-    if (value is num) return value != 0;
-    final text = value?.toString().trim().toLowerCase() ?? '';
-    return text == 'true' || text == '1';
-  }
-
-  void dispose() => _client.dispose();
 }
 
 class _CourierMe {
@@ -465,67 +408,57 @@ class _CourierMe {
   final int ordersCount;
 }
 
-class _AvatarFormatException implements Exception {
-  const _AvatarFormatException(this.message);
-
-  final String message;
-}
-
-class _ProfileHeaderCard extends StatelessWidget {
-  const _ProfileHeaderCard({
-    required this.fullName,
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({
+    required this.name,
     required this.avatarUrl,
-    required this.isOnline,
-    required this.uploadingPhoto,
-    required this.onPhotoTap,
+    required this.online,
+    required this.uploading,
+    required this.onAvatar,
   });
 
-  final String fullName;
+  final String name;
   final String? avatarUrl;
-  final bool isOnline;
-  final bool uploadingPhoto;
-  final VoidCallback onPhotoTap;
+  final bool online;
+  final bool uploading;
+  final VoidCallback onAvatar;
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF489F2A);
-
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFE4E8EF)),
       ),
       child: Row(
         children: [
-          Stack(
-            children: [
-              GestureDetector(
-                onTap: uploadingPhoto ? null : onPhotoTap,
-                child: CircleAvatar(
+          GestureDetector(
+            onTap: uploading ? null : onAvatar,
+            child: Stack(
+              children: [
+                CircleAvatar(
                   radius: 36,
                   backgroundColor: const Color(0xFFE5E7EB),
-                  backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl!),
+                  backgroundImage:
+                      avatarUrl == null ? null : NetworkImage(avatarUrl!),
                   child: avatarUrl == null
                       ? const Icon(Icons.person_rounded, size: 34)
                       : null,
                 ),
-              ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: GestureDetector(
-                  onTap: uploadingPhoto ? null : onPhotoTap,
+                Positioned(
+                  right: 0,
+                  bottom: 0,
                   child: Container(
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: green,
+                      color: const Color(0xFF3FAE2A),
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: uploadingPhoto
+                    child: uploading
                         ? const Padding(
                             padding: EdgeInsets.all(6),
                             child: CircularProgressIndicator(
@@ -540,8 +473,8 @@ class _ProfileHeaderCard extends StatelessWidget {
                           ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -549,7 +482,7 @@ class _ProfileHeaderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  fullName,
+                  name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -558,23 +491,13 @@ class _ProfileHeaderCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isOnline
-                        ? const Color(0xFFECFDF3)
-                        : const Color(0xFFF2F4F7),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    isOnline ? 'Онлайн' : 'Оффлайн',
-                    style: TextStyle(
-                      color: isOnline
-                          ? const Color(0xFF027A48)
-                          : const Color(0xFF667085),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
+                Text(
+                  online ? 'Онлайн' : 'Оффлайн',
+                  style: TextStyle(
+                    color: online
+                        ? const Color(0xFF027A48)
+                        : const Color(0xFF667085),
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
@@ -586,16 +509,11 @@ class _ProfileHeaderCard extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-  });
+class _Metric extends StatelessWidget {
+  const _Metric({required this.label, required this.value});
 
-  final String title;
+  final String label;
   final String value;
-  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -609,20 +527,20 @@ class _MetricCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: const Color(0xFF489F2A)),
-          const SizedBox(height: 10),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+            style: const TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
           Text(
-            title,
+            label,
             style: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w600,
               color: Color(0xFF667085),
             ),
           ),
@@ -632,31 +550,17 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-    );
-  }
-}
-
-class _MenuTile extends StatelessWidget {
-  const _MenuTile({
+class _LinkTile extends StatelessWidget {
+  const _LinkTile({
+    required this.icon,
     required this.title,
     required this.subtitle,
-    required this.icon,
     required this.onTap,
   });
 
+  final IconData icon;
   final String title;
   final String subtitle;
-  final IconData icon;
   final VoidCallback onTap;
 
   @override
@@ -671,7 +575,7 @@ class _MenuTile extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Icon(icon, color: const Color(0xFF489F2A)),
+              Icon(icon, color: const Color(0xFF3FAE2A)),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
@@ -679,10 +583,7 @@ class _MenuTile extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -705,15 +606,9 @@ class _MenuTile extends StatelessWidget {
 }
 
 class _InfoTile extends StatelessWidget {
-  const _InfoTile({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-  });
+  const _InfoTile({required this.version});
 
-  final String title;
-  final String subtitle;
-  final IconData icon;
+  final String version;
 
   @override
   Widget build(BuildContext context) {
@@ -726,16 +621,19 @@ class _InfoTile extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF489F2A)),
+          const Icon(Icons.info_outline_rounded, color: Color(0xFF3FAE2A)),
           const SizedBox(width: 13),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                const Text(
+                  'JETKIZ Курьер',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 3),
                 Text(
-                  subtitle,
+                  'Версия $version',
                   style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF667085),
@@ -750,8 +648,8 @@ class _InfoTile extends StatelessWidget {
   }
 }
 
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
+class _ProfileError extends StatelessWidget {
+  const _ProfileError({required this.message, required this.onRetry});
 
   final String message;
   final Future<void> Function() onRetry;
@@ -764,7 +662,7 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded, size: 42),
+            const Icon(Icons.error_outline_rounded, size: 44),
             const SizedBox(height: 12),
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 16),
@@ -777,4 +675,39 @@ class _ErrorState extends StatelessWidget {
       ),
     );
   }
+}
+
+Map<String, dynamic> _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return <String, dynamic>{};
+}
+
+Map<String, dynamic>? _map(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return null;
+}
+
+String _text(dynamic value) => value?.toString().trim() ?? '';
+
+String _firstText(List<dynamic> values) {
+  for (final value in values) {
+    final text = _text(value);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+int? _int(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(_text(value));
+}
+
+bool _bool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = _text(value).toLowerCase();
+  return text == 'true' || text == '1';
 }
