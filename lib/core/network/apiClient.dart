@@ -14,10 +14,42 @@ class ApiClient {
     : _client = client ?? http.Client(),
       _tokenStorage = tokenStorage ?? TokenStorage();
 
-  static const String baseUrl = String.fromEnvironment(
+  static const String productionBaseUrl = 'https://api.jetkiz.asia';
+  static const String localDebugBaseUrl = 'http://127.0.0.1:3000';
+  static const String _definedBaseUrl = String.fromEnvironment(
     'JETKIZ_API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:3000',
+    defaultValue: '',
   );
+  static const bool _isReleaseBuild = bool.fromEnvironment('dart.vm.product');
+
+  static String get baseUrl {
+    final configured = _definedBaseUrl.trim();
+    final resolved = configured.isNotEmpty
+        ? configured
+        : (_isReleaseBuild ? productionBaseUrl : localDebugBaseUrl);
+    final normalized = resolved.endsWith('/')
+        ? resolved.substring(0, resolved.length - 1)
+        : resolved;
+
+    if (_isReleaseBuild) {
+      final uri = Uri.tryParse(normalized);
+      final host = (uri?.host ?? '').trim().toLowerCase();
+      final unsafeHost = host.isEmpty ||
+          host == 'localhost' ||
+          host == '127.0.0.1' ||
+          host == '0.0.0.0' ||
+          host == '10.0.2.2' ||
+          host.endsWith('.local');
+
+      if (uri?.scheme.toLowerCase() != 'https' || unsafeHost) {
+        throw StateError(
+          'Unsafe JETKIZ_API_BASE_URL for release build: $normalized',
+        );
+      }
+    }
+
+    return normalized;
+  }
 
   static const Duration _timeout = Duration(seconds: 15);
 
@@ -38,25 +70,46 @@ class ApiClient {
 
   Future<dynamic> get(String path) async {
     final response = await _send(method: 'GET', path: path);
-
     return _handleResponse(response);
   }
 
   Future<dynamic> post(String path, [Map<String, dynamic>? body]) async {
     final response = await _send(method: 'POST', path: path, body: body);
+    return _handleResponse(response);
+  }
 
+  Future<dynamic> postPublic(
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    final response = await _sendPublic(
+      method: 'POST',
+      path: path,
+      body: body,
+    );
     return _handleResponse(response);
   }
 
   Future<dynamic> patch(String path, [Map<String, dynamic>? body]) async {
     final response = await _send(method: 'PATCH', path: path, body: body);
-
     return _handleResponse(response);
   }
 
   Future<dynamic> delete(String path, [Map<String, dynamic>? body]) async {
     final response = await _send(method: 'DELETE', path: path, body: body);
+    return _handleResponse(response);
+  }
 
+  Future<dynamic> postMultipart(
+    String path, {
+    required String fieldName,
+    required String filePath,
+  }) async {
+    final response = await _sendMultipart(
+      path: path,
+      fieldName: fieldName,
+      filePath: filePath,
+    );
     return _handleResponse(response);
   }
 
@@ -73,44 +126,97 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl$path');
     final headers = await _buildHeaders(includeAuth: true);
 
-    http.Response response;
+    final response = await _performJsonRequest(
+      method: method,
+      path: path,
+      uri: uri,
+      headers: headers,
+      body: body,
+    );
 
+    if (response.statusCode == 401 && retryAfterRefresh) {
+      final refreshResult = await _refreshTokenOnce();
+
+      if (refreshResult.isSuccess) {
+        return _send(
+          method: method,
+          path: path,
+          body: body,
+          retryAfterRefresh: false,
+        );
+      }
+
+      if (refreshResult.isInvalidSession) {
+        await _expireLocalSession(method: method, path: path);
+      }
+
+      throw refreshResult.error ??
+          ApiException.server(
+            method: 'POST',
+            path: '/auth/refresh',
+            message: 'Token refresh failed temporarily',
+          );
+    }
+
+    if (response.statusCode == 401 && !retryAfterRefresh) {
+      await _expireLocalSession(method: method, path: path);
+    }
+
+    return response;
+  }
+
+  Future<http.Response> _sendPublic({
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final headers = await _buildHeaders(includeAuth: false);
+
+    return _performJsonRequest(
+      method: method,
+      path: path,
+      uri: uri,
+      headers: headers,
+      body: body,
+    );
+  }
+
+  Future<http.Response> _performJsonRequest({
+    required String method,
+    required String path,
+    required Uri uri,
+    required Map<String, String> headers,
+    Map<String, dynamic>? body,
+  }) async {
     try {
       switch (method) {
         case 'GET':
-          response = await _client.get(uri, headers: headers).timeout(_timeout);
-          break;
-
+          return await _client.get(uri, headers: headers).timeout(_timeout);
         case 'POST':
-          response = await _client
+          return await _client
               .post(
                 uri,
                 headers: headers,
                 body: jsonEncode(body ?? <String, dynamic>{}),
               )
               .timeout(_timeout);
-          break;
-
         case 'PATCH':
-          response = await _client
+          return await _client
               .patch(
                 uri,
                 headers: headers,
                 body: jsonEncode(body ?? <String, dynamic>{}),
               )
               .timeout(_timeout);
-          break;
-
         case 'DELETE':
-          response = await _client
+          return await _client
               .delete(
                 uri,
                 headers: headers,
                 body: body == null ? null : jsonEncode(body),
               )
               .timeout(_timeout);
-          break;
-
         default:
           throw Exception('Unsupported method: $method');
       }
@@ -137,40 +243,89 @@ class ApiClient {
         message: e.toString(),
       );
     }
+  }
 
-    if (response.statusCode == 401 && retryAfterRefresh) {
-      final refreshResult = await _refreshTokenOnce();
+  Future<http.Response> _sendMultipart({
+    required String path,
+    required String fieldName,
+    required String filePath,
+    bool retryAfterRefresh = true,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final headers = await _buildHeaders(includeAuth: true);
+    headers.remove('Content-Type');
 
-      if (refreshResult.isSuccess) {
-        return _send(
-          method: method,
-          path: path,
-          body: body,
-          retryAfterRefresh: false,
-        );
-      }
+    try {
+      final request = http.MultipartRequest('POST', uri);
+      request.headers.addAll(headers);
+      request.files.add(
+        await http.MultipartFile.fromPath(fieldName, filePath),
+      );
 
-      if (refreshResult.isInvalidSession) {
-        await _tokenStorage.clear();
-        _sessionExpiredController.add(null);
-        throw ApiException.sessionExpired(method: method, path: path);
-      }
+      final streamed = await _client.send(request).timeout(_timeout);
+      final response = await http.Response.fromStream(streamed);
 
-      throw refreshResult.error ??
-          ApiException.server(
-            method: 'POST',
-            path: '/auth/refresh',
-            message: 'Token refresh failed temporarily',
+      if (response.statusCode == 401 && retryAfterRefresh) {
+        final refreshResult = await _refreshTokenOnce();
+
+        if (refreshResult.isSuccess) {
+          return _sendMultipart(
+            path: path,
+            fieldName: fieldName,
+            filePath: filePath,
+            retryAfterRefresh: false,
           );
-    }
+        }
 
-    if (response.statusCode == 401 && !retryAfterRefresh) {
-      await _tokenStorage.clear();
-      _sessionExpiredController.add(null);
-      throw ApiException.sessionExpired(method: method, path: path);
-    }
+        if (refreshResult.isInvalidSession) {
+          await _expireLocalSession(method: 'POST', path: path);
+        }
 
-    return response;
+        throw refreshResult.error ??
+            ApiException.server(
+              method: 'POST',
+              path: '/auth/refresh',
+              message: 'Token refresh failed temporarily',
+            );
+      }
+
+      if (response.statusCode == 401 && !retryAfterRefresh) {
+        await _expireLocalSession(method: 'POST', path: path);
+      }
+
+      return response;
+    } on TimeoutException {
+      throw ApiException.timeout(method: 'POST', path: path);
+    } on SocketException catch (e) {
+      throw ApiException.network(
+        method: 'POST',
+        path: path,
+        message: e.message,
+      );
+    } on http.ClientException catch (e) {
+      throw ApiException.network(
+        method: 'POST',
+        path: path,
+        message: e.message,
+      );
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException.request(
+        method: 'POST',
+        path: path,
+        message: e.toString(),
+      );
+    }
+  }
+
+  Future<Never> _expireLocalSession({
+    required String method,
+    required String path,
+  }) async {
+    await _tokenStorage.clear();
+    _sessionExpiredController.add(null);
+    throw ApiException.sessionExpired(method: method, path: path);
   }
 
   Future<Map<String, String>> _buildHeaders({required bool includeAuth}) async {
