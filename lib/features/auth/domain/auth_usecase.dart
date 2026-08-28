@@ -2,15 +2,27 @@ import '../data/auth_repository.dart';
 import 'auth_entity.dart';
 
 class AuthUseCase {
-  final AuthRepository repo;
-
   AuthUseCase(this.repo);
 
-  Future<void> requestCode(String phone) {
-    return repo.requestCode(phone);
+  final AuthRepository repo;
+
+  Future<CourierLoginResult> loginCourier(String phone, String password) {
+    return repo.loginCourier(phone, password);
   }
 
-  Future<AuthSession> verifyCode(String phone, String code) {
-    return repo.verifyCode(phone, code);
+  Future<AuthSession> changeTemporaryPassword({
+    required String phone,
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return repo.changeTemporaryPassword(
+      phone: phone,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
+
+  void dispose() {
+    repo.dispose();
   }
 }
