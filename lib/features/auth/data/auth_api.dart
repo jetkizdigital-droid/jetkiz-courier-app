@@ -1,117 +1,55 @@
-import 'dart:async';
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
+import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 
 class AuthApi {
-  AuthApi({http.Client? client}) : _client = client ?? http.Client();
+  AuthApi({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
 
-  final http.Client _client;
+  final ApiClient _apiClient;
 
-  static const String baseUrl = String.fromEnvironment(
-    'JETKIZ_API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:3000',
-  );
-  static const Duration _timeout = Duration(seconds: 15);
-
-  Future<void> requestCode(String phone) async {
-    final normalizedPhone = phone.trim();
-
-    if (normalizedPhone.isEmpty) {
-      throw Exception('phone is empty');
-    }
-
-    final response = await _post(
-      '/auth/request-code',
-      body: {'phone': normalizedPhone},
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'request-code failed: ${response.statusCode} ${_safeBody(response.body)}',
-      );
-    }
-  }
-
-  Future<Map<String, dynamic>> verifyCode({
+  Future<Map<String, dynamic>> loginCourier({
     required String phone,
-    required String code,
+    required String password,
   }) async {
-    final normalizedPhone = phone.trim();
-    final normalizedCode = code.trim();
-
-    if (normalizedPhone.isEmpty) {
-      throw Exception('phone is empty');
-    }
-
-    if (normalizedCode.isEmpty) {
-      throw Exception('code is empty');
-    }
-
-    final response = await _post(
-      '/auth/verify-code',
-      body: {'phone': normalizedPhone, 'code': normalizedCode},
+    final response = await _apiClient.postPublic(
+      '/auth/courier/login-password',
+      {
+        'phone': phone.trim(),
+        'password': password,
+      },
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'verify-code failed: ${response.statusCode} ${_safeBody(response.body)}',
-      );
-    }
-
-    final decoded = _decodeJson(response.body);
-
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('verify-code returned invalid json');
-    }
-
-    return decoded;
+    return _asMap(response, path: '/auth/courier/login-password');
   }
 
-  Future<http.Response> _post(
-    String path, {
-    required Map<String, dynamic> body,
+  Future<Map<String, dynamic>> changeTemporaryPassword({
+    required String phone,
+    required String currentPassword,
+    required String newPassword,
   }) async {
-    final uri = Uri.parse('$baseUrl$path');
+    final response = await _apiClient.postPublic(
+      '/auth/courier/change-password',
+      {
+        'phone': phone.trim(),
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+    );
 
-    try {
-      return await _client
-          .post(
-            uri,
-            headers: const {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'X-App': 'courier',
-            },
-            body: jsonEncode(body),
-          )
-          .timeout(_timeout);
-    } on TimeoutException {
-      throw Exception('request timeout: $path');
-    } on http.ClientException catch (e) {
-      throw Exception('network error: ${e.message}');
-    } catch (e) {
-      throw Exception('request failed: $e');
-    }
+    return _asMap(response, path: '/auth/courier/change-password');
   }
 
-  dynamic _decodeJson(String source) {
-    try {
-      return jsonDecode(source);
-    } catch (_) {
-      throw Exception('server returned invalid json: ${_safeBody(source)}');
+  Map<String, dynamic> _asMap(dynamic response, {required String path}) {
+    if (response is Map<String, dynamic>) {
+      return response;
     }
-  }
 
-  String _safeBody(String body) {
-    final trimmed = body.trim();
-    if (trimmed.isEmpty) {
-      return '<empty body>';
+    if (response is Map) {
+      return Map<String, dynamic>.from(response);
     }
-    return trimmed;
+
+    throw ApiException.invalidResponse(method: 'POST', path: path);
   }
 
   void dispose() {
-    _client.close();
+    _apiClient.dispose();
   }
 }
