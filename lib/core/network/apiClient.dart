@@ -21,6 +21,17 @@ class ApiClient {
     defaultValue: '',
   );
   static const bool _isReleaseBuild = bool.fromEnvironment('dart.vm.product');
+  static const Duration _timeout = Duration(seconds: 15);
+  static const String _app = 'courier';
+  static const String _locale = 'ru';
+  static const String _timezone = 'Asia/Almaty';
+  static const String _deviceIdKey = 'jetkiz_device_id';
+
+  static final StreamController<void> _sessionExpiredController =
+      StreamController<void>.broadcast();
+  static Future<_RefreshResult>? _refreshInFlight;
+
+  static Stream<void> get sessionExpired => _sessionExpiredController.stream;
 
   static String get baseUrl {
     final configured = _definedBaseUrl.trim();
@@ -51,53 +62,48 @@ class ApiClient {
     return normalized;
   }
 
-  static const Duration _timeout = Duration(seconds: 15);
-
-  static const String _app = 'courier';
-  static const String _locale = 'ru';
-  static const String _timezone = 'Asia/Almaty';
-  static const String _deviceIdKey = 'jetkiz_device_id';
-
-  static final StreamController<void> _sessionExpiredController =
-      StreamController<void>.broadcast();
-  static Future<_RefreshResult>? _refreshInFlight;
-
-  static Stream<void> get sessionExpired => _sessionExpiredController.stream;
-
   final http.Client _client;
   final TokenStorage _tokenStorage;
   final Uuid _uuid = const Uuid();
 
   Future<dynamic> get(String path) async {
-    final response = await _send(method: 'GET', path: path);
-    return _handleResponse(response);
+    return _handleResponse(await _send(method: 'GET', path: path));
   }
 
   Future<dynamic> post(String path, [Map<String, dynamic>? body]) async {
-    final response = await _send(method: 'POST', path: path, body: body);
-    return _handleResponse(response);
+    return _handleResponse(
+      await _send(method: 'POST', path: path, body: body),
+    );
   }
 
   Future<dynamic> postPublic(
     String path, [
     Map<String, dynamic>? body,
   ]) async {
-    final response = await _sendPublic(
-      method: 'POST',
-      path: path,
-      body: body,
+    return _handleResponse(
+      await _sendPublic(method: 'POST', path: path, body: body),
     );
-    return _handleResponse(response);
   }
 
   Future<dynamic> patch(String path, [Map<String, dynamic>? body]) async {
-    final response = await _send(method: 'PATCH', path: path, body: body);
-    return _handleResponse(response);
+    // Compatibility bridge: older screens used this route. Never call the
+    // legacy backend presence implementation because it could make stale GPS
+    // coordinates appear fresh by touching lastSeenAt without a GPS fix.
+    if (path == '/couriers/me/online') {
+      return post('/couriers/me/online-status', {
+        'isOnline': body?['isOnline'] == true,
+      });
+    }
+
+    return _handleResponse(
+      await _send(method: 'PATCH', path: path, body: body),
+    );
   }
 
   Future<dynamic> delete(String path, [Map<String, dynamic>? body]) async {
-    final response = await _send(method: 'DELETE', path: path, body: body);
-    return _handleResponse(response);
+    return _handleResponse(
+      await _send(method: 'DELETE', path: path, body: body),
+    );
   }
 
   Future<dynamic> postMultipart(
@@ -105,17 +111,16 @@ class ApiClient {
     required String fieldName,
     required String filePath,
   }) async {
-    final response = await _sendMultipart(
-      path: path,
-      fieldName: fieldName,
-      filePath: filePath,
+    return _handleResponse(
+      await _sendMultipart(
+        path: path,
+        fieldName: fieldName,
+        filePath: filePath,
+      ),
     );
-    return _handleResponse(response);
   }
 
-  Future<String> getDeviceId() {
-    return _getDeviceId();
-  }
+  Future<String> getDeviceId() => _getDeviceId();
 
   Future<http.Response> _send({
     required String method,
@@ -123,61 +128,53 @@ class ApiClient {
     Map<String, dynamic>? body,
     bool retryAfterRefresh = true,
   }) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final headers = await _buildHeaders(includeAuth: true);
-
     final response = await _performJsonRequest(
       method: method,
       path: path,
-      uri: uri,
-      headers: headers,
+      uri: Uri.parse('$baseUrl$path'),
+      headers: await _buildHeaders(includeAuth: true),
       body: body,
     );
 
-    if (response.statusCode == 401 && retryAfterRefresh) {
-      final refreshResult = await _refreshTokenOnce();
+    if (response.statusCode != 401) return response;
 
-      if (refreshResult.isSuccess) {
-        return _send(
-          method: method,
-          path: path,
-          body: body,
-          retryAfterRefresh: false,
-        );
-      }
-
-      if (refreshResult.isInvalidSession) {
-        await _expireLocalSession(method: method, path: path);
-      }
-
-      throw refreshResult.error ??
-          ApiException.server(
-            method: 'POST',
-            path: '/auth/refresh',
-            message: 'Token refresh failed temporarily',
-          );
-    }
-
-    if (response.statusCode == 401 && !retryAfterRefresh) {
+    if (!retryAfterRefresh) {
       await _expireLocalSession(method: method, path: path);
     }
 
-    return response;
+    final refreshResult = await _refreshTokenOnce();
+
+    if (refreshResult.isSuccess) {
+      return _send(
+        method: method,
+        path: path,
+        body: body,
+        retryAfterRefresh: false,
+      );
+    }
+
+    if (refreshResult.isInvalidSession) {
+      await _expireLocalSession(method: method, path: path);
+    }
+
+    throw refreshResult.error ??
+        ApiException.server(
+          method: 'POST',
+          path: '/auth/refresh',
+          message: 'Token refresh failed temporarily',
+        );
   }
 
   Future<http.Response> _sendPublic({
     required String method,
     required String path,
     Map<String, dynamic>? body,
-  }) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final headers = await _buildHeaders(includeAuth: false);
-
+  }) {
     return _performJsonRequest(
       method: method,
       path: path,
-      uri: uri,
-      headers: headers,
+      uri: Uri.parse('$baseUrl$path'),
+      headersFuture: _buildHeaders(includeAuth: false),
       body: body,
     );
   }
@@ -186,18 +183,21 @@ class ApiClient {
     required String method,
     required String path,
     required Uri uri,
-    required Map<String, String> headers,
+    Map<String, String>? headers,
+    Future<Map<String, String>>? headersFuture,
     Map<String, dynamic>? body,
   }) async {
+    final resolvedHeaders = headers ?? await headersFuture!;
+
     try {
       switch (method) {
         case 'GET':
-          return await _client.get(uri, headers: headers).timeout(_timeout);
+          return await _client.get(uri, headers: resolvedHeaders).timeout(_timeout);
         case 'POST':
           return await _client
               .post(
                 uri,
-                headers: headers,
+                headers: resolvedHeaders,
                 body: jsonEncode(body ?? <String, dynamic>{}),
               )
               .timeout(_timeout);
@@ -205,7 +205,7 @@ class ApiClient {
           return await _client
               .patch(
                 uri,
-                headers: headers,
+                headers: resolvedHeaders,
                 body: jsonEncode(body ?? <String, dynamic>{}),
               )
               .timeout(_timeout);
@@ -213,27 +213,23 @@ class ApiClient {
           return await _client
               .delete(
                 uri,
-                headers: headers,
+                headers: resolvedHeaders,
                 body: body == null ? null : jsonEncode(body),
               )
               .timeout(_timeout);
         default:
-          throw Exception('Unsupported method: $method');
+          throw ApiException.request(
+            method: method,
+            path: path,
+            message: 'Unsupported method: $method',
+          );
       }
     } on TimeoutException {
       throw ApiException.timeout(method: method, path: path);
     } on SocketException catch (e) {
-      throw ApiException.network(
-        method: method,
-        path: path,
-        message: e.message,
-      );
+      throw ApiException.network(method: method, path: path, message: e.message);
     } on http.ClientException catch (e) {
-      throw ApiException.network(
-        method: method,
-        path: path,
-        message: e.message,
-      );
+      throw ApiException.network(method: method, path: path, message: e.message);
     } on ApiException {
       rethrow;
     } catch (e) {
@@ -251,63 +247,51 @@ class ApiClient {
     required String filePath,
     bool retryAfterRefresh = true,
   }) async {
-    final uri = Uri.parse('$baseUrl$path');
     final headers = await _buildHeaders(includeAuth: true);
     headers.remove('Content-Type');
 
     try {
-      final request = http.MultipartRequest('POST', uri);
+      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'));
       request.headers.addAll(headers);
-      request.files.add(
-        await http.MultipartFile.fromPath(fieldName, filePath),
+      request.files.add(await http.MultipartFile.fromPath(fieldName, filePath));
+
+      final response = await http.Response.fromStream(
+        await _client.send(request).timeout(_timeout),
       );
 
-      final streamed = await _client.send(request).timeout(_timeout);
-      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode != 401) return response;
 
-      if (response.statusCode == 401 && retryAfterRefresh) {
-        final refreshResult = await _refreshTokenOnce();
-
-        if (refreshResult.isSuccess) {
-          return _sendMultipart(
-            path: path,
-            fieldName: fieldName,
-            filePath: filePath,
-            retryAfterRefresh: false,
-          );
-        }
-
-        if (refreshResult.isInvalidSession) {
-          await _expireLocalSession(method: 'POST', path: path);
-        }
-
-        throw refreshResult.error ??
-            ApiException.server(
-              method: 'POST',
-              path: '/auth/refresh',
-              message: 'Token refresh failed temporarily',
-            );
-      }
-
-      if (response.statusCode == 401 && !retryAfterRefresh) {
+      if (!retryAfterRefresh) {
         await _expireLocalSession(method: 'POST', path: path);
       }
 
-      return response;
+      final refreshResult = await _refreshTokenOnce();
+
+      if (refreshResult.isSuccess) {
+        return _sendMultipart(
+          path: path,
+          fieldName: fieldName,
+          filePath: filePath,
+          retryAfterRefresh: false,
+        );
+      }
+
+      if (refreshResult.isInvalidSession) {
+        await _expireLocalSession(method: 'POST', path: path);
+      }
+
+      throw refreshResult.error ??
+          ApiException.server(
+            method: 'POST',
+            path: '/auth/refresh',
+            message: 'Token refresh failed temporarily',
+          );
     } on TimeoutException {
       throw ApiException.timeout(method: 'POST', path: path);
     } on SocketException catch (e) {
-      throw ApiException.network(
-        method: 'POST',
-        path: path,
-        message: e.message,
-      );
+      throw ApiException.network(method: 'POST', path: path, message: e.message);
     } on http.ClientException catch (e) {
-      throw ApiException.network(
-        method: 'POST',
-        path: path,
-        message: e.message,
-      );
+      throw ApiException.network(method: 'POST', path: path, message: e.message);
     } on ApiException {
       rethrow;
     } catch (e) {
@@ -357,9 +341,7 @@ class ApiClient {
 
   Future<_RefreshResult> _refreshTokenOnce() async {
     final existing = _refreshInFlight;
-    if (existing != null) {
-      return existing;
-    }
+    if (existing != null) return existing;
 
     final future = _tryRefreshToken();
     _refreshInFlight = future;
@@ -375,21 +357,15 @@ class ApiClient {
 
   Future<_RefreshResult> _tryRefreshToken() async {
     final refreshToken = await _tokenStorage.getRefreshToken();
-
     if (refreshToken == null || refreshToken.isEmpty) {
       return const _RefreshResult.invalidSession();
     }
 
-    final uri = Uri.parse('$baseUrl/auth/refresh');
-    final headers = await _buildHeaders(includeAuth: false);
-
-    headers['x-skip-auth-refresh'] = 'true';
-
     try {
       final response = await _client
           .post(
-            uri,
-            headers: headers,
+            Uri.parse('$baseUrl/auth/refresh'),
+            headers: await _buildHeaders(includeAuth: false),
             body: jsonEncode({'refreshToken': refreshToken}),
           )
           .timeout(_timeout);
@@ -410,33 +386,24 @@ class ApiClient {
         );
       }
 
-      dynamic decoded;
-      try {
-        decoded = jsonDecode(response.body);
-      } catch (_) {
-        return _RefreshResult.transientFailure(
-          ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
-        );
-      }
-
+      final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) {
         return _RefreshResult.transientFailure(
           ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
         );
       }
 
-      final newAccessToken = decoded['accessToken']?.toString();
+      final accessToken = decoded['accessToken']?.toString().trim() ?? '';
       final newRefreshToken =
-          decoded['refreshToken']?.toString() ?? refreshToken;
+          decoded['refreshToken']?.toString().trim() ?? refreshToken;
 
-      if (newAccessToken == null || newAccessToken.isEmpty) {
+      if (accessToken.isEmpty || newRefreshToken.isEmpty) {
         return _RefreshResult.transientFailure(
           ApiException.invalidResponse(method: 'POST', path: '/auth/refresh'),
         );
       }
 
-      await _tokenStorage.saveTokens(newAccessToken, newRefreshToken);
-
+      await _tokenStorage.saveTokens(accessToken, newRefreshToken);
       return const _RefreshResult.success();
     } on TimeoutException {
       return _RefreshResult.transientFailure(
@@ -470,58 +437,43 @@ class ApiClient {
   }
 
   dynamic _handleResponse(http.Response response) {
-    final status = response.statusCode;
-    final bodyText = response.body.trim();
+    final body = response.body.trim();
 
-    if (status < 200 || status >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException.fromResponse(
-        method: 'HTTP',
+        method: response.request?.method ?? 'HTTP',
         path: response.request?.url.path ?? '',
         response: response,
       );
     }
 
-    if (bodyText.isEmpty) {
-      return null;
-    }
+    if (body.isEmpty) return null;
 
     try {
-      return jsonDecode(bodyText);
+      return jsonDecode(body);
     } catch (_) {
-      return bodyText;
+      return body;
     }
   }
 
   Future<String> _getDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getString(_deviceIdKey);
-
-    if (existing != null && existing.trim().isNotEmpty) {
-      return existing;
-    }
+    final existing = prefs.getString(_deviceIdKey)?.trim() ?? '';
+    if (existing.isNotEmpty) return existing;
 
     final generated = 'jetkiz-courier-${_uuid.v4()}';
     await prefs.setString(_deviceIdKey, generated);
-
     return generated;
   }
 
   Future<String> _getAppVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
-
       final version = info.version.trim();
-      final buildNumber = info.buildNumber.trim();
-
-      if (version.isEmpty && buildNumber.isEmpty) {
-        return '1.0.0';
-      }
-
-      if (buildNumber.isEmpty) {
-        return version;
-      }
-
-      return '$version+$buildNumber';
+      final build = info.buildNumber.trim();
+      if (version.isEmpty && build.isEmpty) return '1.0.0';
+      if (build.isEmpty) return version;
+      return '$version+$build';
     } catch (_) {
       return '1.0.0';
     }
@@ -530,7 +482,6 @@ class ApiClient {
   String _buildRequestId() {
     final now = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     final random = _uuid.v4().replaceAll('-', '').substring(0, 16);
-
     return 'req-$now-$random';
   }
 
@@ -540,13 +491,10 @@ class ApiClient {
     if (Platform.isMacOS) return 'macos';
     if (Platform.isWindows) return 'windows';
     if (Platform.isLinux) return 'linux';
-
     return 'unknown';
   }
 
-  void dispose() {
-    _client.close();
-  }
+  void dispose() => _client.close();
 }
 
 enum ApiErrorKind {
@@ -615,74 +563,63 @@ class ApiException implements Exception {
     required String method,
     required String path,
     required String message,
-  }) {
-    return ApiException(
-      kind: ApiErrorKind.network,
-      method: method,
-      path: path,
-      message: 'Network error: $message',
-    );
-  }
+  }) => ApiException(
+    kind: ApiErrorKind.network,
+    method: method,
+    path: path,
+    message: 'Network error: $message',
+  );
 
-  factory ApiException.timeout({required String method, required String path}) {
-    return ApiException(
-      kind: ApiErrorKind.timeout,
-      method: method,
-      path: path,
-      message: 'Request timeout: $method $path',
-    );
-  }
+  factory ApiException.timeout({required String method, required String path}) =>
+      ApiException(
+        kind: ApiErrorKind.timeout,
+        method: method,
+        path: path,
+        message: 'Request timeout: $method $path',
+      );
 
   factory ApiException.server({
     required String method,
     required String path,
     required String message,
-  }) {
-    return ApiException(
-      kind: ApiErrorKind.server,
-      method: method,
-      path: path,
-      message: message,
-    );
-  }
+  }) => ApiException(
+    kind: ApiErrorKind.server,
+    method: method,
+    path: path,
+    message: message,
+  );
 
   factory ApiException.sessionExpired({
     required String method,
     required String path,
-  }) {
-    return ApiException(
-      kind: ApiErrorKind.sessionExpired,
-      method: method,
-      path: path,
-      statusCode: 401,
-      message: 'Session expired',
-    );
-  }
+  }) => ApiException(
+    kind: ApiErrorKind.sessionExpired,
+    method: method,
+    path: path,
+    statusCode: 401,
+    message: 'Session expired',
+  );
 
   factory ApiException.invalidResponse({
     required String method,
     required String path,
-  }) {
-    return ApiException(
-      kind: ApiErrorKind.invalidResponse,
-      method: method,
-      path: path,
-      message: 'Server returned an invalid response',
-    );
-  }
+  }) => ApiException(
+    kind: ApiErrorKind.invalidResponse,
+    method: method,
+    path: path,
+    message: 'Server returned an invalid response',
+  );
 
   factory ApiException.request({
     required String method,
     required String path,
     required String message,
-  }) {
-    return ApiException(
-      kind: ApiErrorKind.request,
-      method: method,
-      path: path,
-      message: message,
-    );
-  }
+  }) => ApiException(
+    kind: ApiErrorKind.request,
+    method: method,
+    path: path,
+    message: message,
+  );
 
   @override
   String toString() => message;
@@ -697,10 +634,8 @@ class _RefreshResult {
 
   const _RefreshResult.success()
     : this._(isSuccess: true, isInvalidSession: false);
-
   const _RefreshResult.invalidSession()
     : this._(isSuccess: false, isInvalidSession: true);
-
   const _RefreshResult.transientFailure(ApiException error)
     : this._(isSuccess: false, isInvalidSession: false, error: error);
 
