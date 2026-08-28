@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:jetkiz_courier_app/core/firebase/firebase_bootstrap.dart';
+import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_message_service.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
@@ -13,7 +14,6 @@ import 'package:jetkiz_courier_app/features/orders/presentation/order_details_pa
 import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
-
 late final PushMessageService pushMessageService;
 
 PushNavigationIntent? _pendingPushIntent;
@@ -44,7 +44,6 @@ Future<void> main() async {
   AuthGate.onCourierAuthenticated = _handleCourierAuthenticated;
 
   await pushMessageService.initialize(onIntent: _handlePushIntent);
-
   runApp(const MyApp());
 }
 
@@ -64,13 +63,12 @@ void _handleCourierAuthenticated() {
 
 void _handleSessionExpired() {
   _courierAuthenticated = false;
+  unawaited(CourierLocationService().stopTracking());
 
   final navigator = appNavigatorKey.currentState;
 
   if (navigator == null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _handleSessionExpired();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handleSessionExpired());
     return;
   }
 
@@ -92,10 +90,7 @@ void _openPendingPushIfReady() {
 
   final intent = _pendingPushIntent;
   final navigator = appNavigatorKey.currentState;
-
-  if (intent == null || navigator == null) {
-    return;
-  }
+  if (intent == null || navigator == null) return;
 
   _pendingPushIntent = null;
 
@@ -138,22 +133,35 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     unawaited(_sessionExpiredSubscription?.cancel());
     unawaited(pushMessageService.dispose());
+    unawaited(CourierLocationService().shutdown());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    const green = Color(0xFF3FAE2A);
+
     return MaterialApp(
       navigatorKey: appNavigatorKey,
       debugShowCheckedModeBanner: false,
       locale: const Locale('ru'),
-      supportedLocales: const [Locale('ru'), Locale('en')],
+      supportedLocales: const [Locale('ru')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: ThemeData(useMaterial3: true),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: green),
+        scaffoldBackgroundColor: const Color(0xFFF8F8FA),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: green,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ),
       home: const AuthGate(),
     );
   }
