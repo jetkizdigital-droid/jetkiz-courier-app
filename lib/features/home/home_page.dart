@@ -5,10 +5,10 @@ import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
 import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
+import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
 import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
-import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -17,469 +17,309 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final _CourierHomeApi _api;
   late final CourierLocationService _locationService;
 
-  Timer? _activeOrderTimer;
-  bool _isPollingActiveOrder = false;
-  bool _isActiveOrderActionLoading = false;
-  bool _isChangingOnline = false;
+  Timer? _pollTimer;
+  bool _foreground = true;
+  bool _loading = true;
+  bool _refreshing = false;
+  bool _changingOnline = false;
+  bool _polling = false;
 
-  bool _isLoading = true;
-  bool _isRefreshing = false;
   bool isOnline = false;
-
   String courierName = 'Курьер';
   int todayOrders = 0;
   int todayEarnings = 0;
   int todayCompleted = 0;
   int unreadCount = 0;
-
   Map<String, dynamic>? activeOrder;
   String error = '';
-
-  String get todayText {
-    final now = DateTime.now();
-    const months = [
-      '',
-      'января',
-      'февраля',
-      'марта',
-      'апреля',
-      'мая',
-      'июня',
-      'июля',
-      'августа',
-      'сентября',
-      'октября',
-      'ноября',
-      'декабря',
-    ];
-    return '${now.day} ${months[now.month]}';
-  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _api = _CourierHomeApi(ApiClient());
     _locationService = CourierLocationService();
     _loadInitial();
-    _startActiveOrderPolling();
+    _startPolling();
   }
 
   @override
   void dispose() {
-    _activeOrderTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
     unawaited(_locationService.dispose());
+    _api.dispose();
     super.dispose();
   }
 
-  void _startActiveOrderPolling() {
-    _activeOrderTimer?.cancel();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasForeground = _foreground;
+    _foreground = state == AppLifecycleState.resumed;
 
-    _activeOrderTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _silentRefreshActiveOrder(),
-    );
+    if (!wasForeground && _foreground) {
+      unawaited(_refresh(silent: true));
+    }
   }
 
-  Future<void> _silentRefreshActiveOrder() async {
-    if (!mounted ||
-        _isLoading ||
-        _isRefreshing ||
-        _isPollingActiveOrder ||
-        _isActiveOrderActionLoading) {
-      return;
-    }
-
-    _isPollingActiveOrder = true;
-
-    try {
-      final active = await _api.getActiveOrder();
-      final unread = await _api.getUnreadCount();
-      final resolvedActiveOrder = _normalizeActiveOrder(active);
-
-      if (!mounted) return;
-
-      final previousId = activeOrder?['id']?.toString() ?? '';
-      final nextId = resolvedActiveOrder?['id']?.toString() ?? '';
-
-      final hadNoOrderBefore = activeOrder == null;
-      final hasNewOrderNow = resolvedActiveOrder != null;
-      final isNewOrderAppeared =
-          hadNoOrderBefore && hasNewOrderNow && nextId.isNotEmpty;
-
-      setState(() {
-        activeOrder = resolvedActiveOrder;
-        unreadCount = unread;
-      });
-
-      if (isNewOrderAppeared) {
-        _showSnackBar('Поступил новый заказ');
-      } else if (previousId.isNotEmpty &&
-          nextId.isNotEmpty &&
-          previousId != nextId) {
-        _showSnackBar('Активный заказ обновился');
-      }
-    } catch (_) {
-      // silent polling
-    } finally {
-      _isPollingActiveOrder = false;
-    }
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_foreground) unawaited(_pollOperationalState());
+    });
   }
 
   Future<void> _loadInitial() async {
     setState(() {
-      _isLoading = true;
+      _loading = true;
       error = '';
     });
 
     try {
       await _loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() {
-        error = 'Не удалось загрузить данные';
-      });
+      setState(() => error = _humanizeError(e));
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _isRefreshing = true;
-      error = '';
-    });
+  Future<void> _refresh({bool silent = false}) async {
+    if (_refreshing) return;
+
+    if (!silent && mounted) {
+      setState(() {
+        _refreshing = true;
+        error = '';
+      });
+    }
 
     try {
       await _loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() {
-        error = 'Не удалось обновить данные';
-      });
+      setState(() => error = _humanizeError(e));
     } finally {
-      if (mounted) {
-        setState(() {
-          _isRefreshing = false;
-        });
-      }
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
   Future<void> _loadData() async {
-    final meFuture = _api.getMe();
-    final todayStatsFuture = _api.getTodayStats();
-    final activeOrderFuture = _api.getActiveOrder();
-    final unreadFuture = _api.getUnreadCount();
-
     final results = await Future.wait<dynamic>([
-      meFuture,
-      todayStatsFuture,
-      activeOrderFuture,
-      unreadFuture,
+      _api.getMe(),
+      _api.getTodayStats(),
+      _api.getActiveOrder(),
+      _api.getUnreadCount(),
     ]);
 
     final me = results[0] as Map<String, dynamic>;
-    final todayStats = results[1] as _HomeTodayStats;
+    final stats = results[1] as _HomeTodayStats;
     final active = results[2] as Map<String, dynamic>?;
     final unread = results[3] as int;
 
-    final firstName = _readString(
-      me,
-      const ['firstName'],
-      fallbackKeys: const ['name', 'user.firstName', 'profile.firstName'],
-    );
-    final lastName = _readNullableString(
-      me,
-      const ['lastName'],
-      fallbackKeys: const ['user.lastName', 'profile.lastName'],
-    );
-
-    final resolvedName = [
-      firstName.trim(),
-      (lastName ?? '').trim(),
-    ].where((e) => e.isNotEmpty).join(' ');
-
-    final activeFromMe =
-        _readMap(me, const ['activeOrder']) ??
-        _readMap(me, const ['order']) ??
-        _readMap(me, const ['currentOrder']);
-
-    final resolvedActiveOrder = _normalizeActiveOrder(active ?? activeFromMe);
-
-    final resolvedOnline = _readBool(
-      me,
-      const ['isOnline'],
-      fallbackKeys: const ['profile.isOnline', 'courierProfile.isOnline'],
-    );
+    final firstName = _string(me['firstName']);
+    final lastName = _string(me['lastName']);
+    final fullName = [firstName, lastName].where((e) => e.isNotEmpty).join(' ');
+    final online = _bool(me['isOnline']) ||
+        _bool(_map(me['profile'])?['isOnline']) ||
+        _bool(_map(me['courierProfile'])?['isOnline']);
 
     if (!mounted) return;
 
     setState(() {
-      courierName = resolvedName.isEmpty ? 'Курьер' : resolvedName;
-      isOnline = resolvedOnline;
-      todayOrders = todayStats.orders;
-      todayEarnings = todayStats.earnings;
-      todayCompleted = todayStats.completed;
+      courierName = fullName.isEmpty ? 'Курьер' : fullName;
+      isOnline = online;
+      todayOrders = stats.orders;
+      todayEarnings = stats.earnings;
+      todayCompleted = stats.completed;
       unreadCount = unread;
-      activeOrder = resolvedActiveOrder;
+      activeOrder = _normalizeActiveOrder(active);
       error = '';
     });
 
-    if (resolvedOnline && !_locationService.isTracking) {
+    if (online && !_locationService.isTracking) {
       unawaited(_startLocationTrackingSilently());
     }
 
-    if (!resolvedOnline && _locationService.isTracking) {
+    if (!online && _locationService.isTracking && activeOrder == null) {
       unawaited(_locationService.stopTracking());
+    }
+  }
+
+  Future<void> _pollOperationalState() async {
+    if (_polling || _loading || _refreshing) return;
+    _polling = true;
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _api.getActiveOrder(),
+        _api.getUnreadCount(),
+      ]);
+
+      if (!mounted) return;
+
+      final nextOrder = _normalizeActiveOrder(
+        results[0] as Map<String, dynamic>?,
+      );
+      final previousId = _string(activeOrder?['id']);
+      final nextId = _string(nextOrder?['id']);
+
+      setState(() {
+        activeOrder = nextOrder;
+        unreadCount = results[1] as int;
+      });
+
+      if (previousId.isEmpty && nextId.isNotEmpty) {
+        _showSnackBar('Поступил новый заказ');
+      }
+    } catch (_) {
+      // Background polling is best-effort. Push remains the primary signal.
+    } finally {
+      _polling = false;
     }
   }
 
   Future<void> _startLocationTrackingSilently() async {
     try {
       final result = await _locationService.startTracking();
-
       if (!mounted) return;
 
       if (!result.started) {
         _showSnackBar(result.message);
       }
     } catch (_) {
-      // Геолокация не должна ломать загрузку главного экрана.
+      // The screen stays usable; the next foreground/resume retries tracking.
     }
   }
 
   Future<void> _toggleOnline() async {
-  if (_isChangingOnline) return;
+    if (_changingOnline) return;
 
-  final nextValue = !isOnline;
-  final previousValue = isOnline;
+    final next = !isOnline;
 
-  setState(() {
-    _isChangingOnline = true;
-  });
-
-  if (nextValue) {
-    try {
-      final permission = await _locationService.ensurePermission();
-
-      if (!permission.allowed) {
-        if (!mounted) return;
-
-        setState(() {
-          isOnline = previousValue;
-          _isChangingOnline = false;
-        });
-
-        _showSnackBar(permission.message);
-        return;
-      }
-
-      await _api.setOnline(true);
-
-      if (!mounted) return;
-
-      setState(() {
-        isOnline = true;
-        _isChangingOnline = false;
-      });
-
-      _showSnackBar('Вы онлайн. Запускаем геолокацию.');
-
-      unawaited(_locationService.startTracking());
-    } catch (_) {
-      await _locationService.stopTracking();
-
-      if (!mounted) return;
-
-      setState(() {
-        isOnline = previousValue;
-        _isChangingOnline = false;
-      });
-
-      _showSnackBar('Не удалось выйти на линию');
+    if (!next && activeOrder != null) {
+      _showSnackBar('Нельзя уйти оффлайн, пока есть активный заказ.');
+      return;
     }
 
-    return;
+    setState(() => _changingOnline = true);
+
+    try {
+      if (next) {
+        final permission = await _locationService.ensurePermission();
+        if (!permission.allowed) {
+          _showSnackBar(permission.message);
+          return;
+        }
+
+        await _api.setOnline(true);
+        final tracking = await _locationService.startTracking();
+
+        if (!tracking.started) {
+          await _api.setOnline(false).catchError((_) {});
+          _showSnackBar(tracking.message);
+          return;
+        }
+
+        if (!mounted) return;
+        setState(() => isOnline = true);
+        _showSnackBar('Вы на линии. Геолокация активна.');
+      } else {
+        await _api.setOnline(false);
+        await _locationService.stopTracking();
+
+        if (!mounted) return;
+        setState(() => isOnline = false);
+        _showSnackBar('Вы оффлайн.');
+      }
+    } catch (e) {
+      if (next) {
+        await _locationService.stopTracking();
+      }
+      _showSnackBar(_humanizeError(e));
+    } finally {
+      if (mounted) setState(() => _changingOnline = false);
+    }
   }
 
-  try {
-    await _api.setOnline(false);
-    await _locationService.stopTracking();
+  Future<void> _openActiveOrder() async {
+    final id = _string(activeOrder?['id']);
+    if (id.isEmpty) return;
 
-    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: id)),
+    );
 
-    setState(() {
-      isOnline = false;
-      _isChangingOnline = false;
-    });
-
-    _showSnackBar('Вы оффлайн. Геолокация остановлена.');
-  } catch (_) {
-    if (!mounted) return;
-
-    setState(() {
-      isOnline = previousValue;
-      _isChangingOnline = false;
-    });
-
-    _showSnackBar('Не удалось изменить статус');
+    if (mounted) await _refresh(silent: true);
   }
-}
+
+  void _openNotifications() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const NotificationsPage()),
+    );
+  }
 
   void _onBottomBarTap(int index) {
     if (index == 0) return;
 
-    if (index == 1) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const OrdersPage(),
-        ),
-      );
-      return;
-    }
+    final Widget page = switch (index) {
+      1 => const OrdersPage(),
+      2 => const FinancePage(),
+      3 => const ProfilePage(),
+      _ => const HomePage(),
+    };
 
-    if (index == 2) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const FinancePage(),
-        ),
-      );
-      return;
-    }
-
-    if (index == 3) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const ProfilePage(),
-        ),
-      );
-      return;
-    }
-  }
-
-  void _openNotifications() {
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => const NotificationsPage(),
-    ),
-  );
-}
-
-  Future<void> _openActiveOrder() async {
-    final id = activeOrder?['id']?.toString() ?? '';
-    if (id.isEmpty) {
-      _showSnackBar('Активного заказа нет');
-      return;
-    }
-
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => OrderDetailsPage(orderId: id),
-      ),
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => page),
     );
-
-    await _loadInitial();
   }
 
-  String _activeOrderActionLabel() {
-    final status = (activeOrder?['status'] ?? '').toString().toUpperCase();
-
-    if (status == 'READY') {
-      return 'Забрал заказ';
-    }
-
-    if (status == 'ON_THE_WAY') {
-      return 'Доставил';
-    }
-
-    return 'Открыть заказ';
-  }
-
-  Future<void> _handleActiveOrderAction() async {
-    final current = activeOrder;
-    if (current == null || _isActiveOrderActionLoading) return;
-
-    final id = current['id']?.toString() ?? '';
-    final status = (current['status'] ?? '').toString().toUpperCase();
-
-    if (id.isEmpty) {
-      _showSnackBar('Активный заказ не найден');
-      return;
-    }
-
-    if (!(status == 'READY' || status == 'ON_THE_WAY')) {
-      await _openActiveOrder();
-      return;
-    }
-
-    setState(() {
-      _isActiveOrderActionLoading = true;
-    });
-
-    try {
-      if (status == 'READY') {
-        await _api.updateCourierOrderStatus(
-          orderId: id,
-          status: 'ON_THE_WAY',
-        );
-        _showSnackBar('Заказ забран');
-      } else if (status == 'ON_THE_WAY') {
-        await _api.updateCourierOrderStatus(
-          orderId: id,
-          status: 'DELIVERED',
-        );
-        _showSnackBar('Заказ доставлен');
+  String _humanizeError(Object error) {
+    if (error is ApiException) {
+      switch (error.kind) {
+        case ApiErrorKind.network:
+          return 'Нет соединения с сервером. Проверьте интернет.';
+        case ApiErrorKind.timeout:
+          return 'Сервер не ответил вовремя. Попробуйте ещё раз.';
+        case ApiErrorKind.forbidden:
+          return 'Действие недоступно для этого аккаунта.';
+        case ApiErrorKind.sessionExpired:
+        case ApiErrorKind.unauthorized:
+          return 'Сессия истекла. Войдите заново.';
+        default:
+          return 'Не удалось обновить данные. Попробуйте ещё раз.';
       }
-
-      await _loadInitial();
-    } catch (_) {
-      _showSnackBar('Ошибка обновления статуса');
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _isActiveOrderActionLoading = false;
-      });
     }
+
+    return 'Не удалось выполнить действие. Попробуйте ещё раз.';
   }
 
   void _showSnackBar(String message) {
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
     messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  String get _todayText {
+    final now = DateTime.now();
+    const months = [
+      '', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+    ];
+    return '${now.day} ${months[now.month]}';
+  }
+
   @override
   Widget build(BuildContext context) {
+    const bg = Color(0xFFF8F8FA);
     const green = Color(0xFF3FAE2A);
     const darkGreen = Color(0xFF2F8731);
-    const red = Color(0xFFDC2626);
-    const orange = Color(0xFFF59E0B);
-    const textMuted = Color(0xFF8E8E93);
-    const borderColor = Color(0xFFD8DDE6);
-    const bg = Color(0xFFF8F8FA);
-
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: bg,
-        bottomNavigationBar: CourierBottomBar(
-          currentIndex: 0,
-          onTap: _onBottomBarTap,
-        ),
-        body: const SafeArea(
-          child: Center(
-            child: CircularProgressIndicator(),
-          ),
-        ),
-      );
-    }
 
     return Scaffold(
       backgroundColor: bg,
@@ -488,366 +328,96 @@ class _HomePageState extends State<HomePage> {
         onTap: _onBottomBarTap,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-              decoration: const BoxDecoration(
-                color: bg,
-                border: Border(
-                  bottom: BorderSide(
-                    color: Color(0xFFE4E8EF),
-                    width: 1,
-                  ),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Привет, $courierName',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Сегодня: $todayText',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                            color: textMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(26),
-                          border: Border.all(
-                            color: borderColor,
-                            width: 1.3,
-                          ),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x0D000000),
-                              blurRadius: 10,
-                              offset: Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: IconButton(
-                          onPressed: _openNotifications,
-                          icon: const Icon(
-                            Icons.notifications_none_rounded,
-                            size: 24,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                      if (unreadCount > 0)
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 20,
-                              minHeight: 20,
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 5),
-                            decoration: BoxDecoration(
-                              color: red,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: Colors.white,
-                                width: 1.5,
-                              ),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              unreadCount > 99 ? '99+' : '$unreadCount',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: RefreshIndicator(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
                 onRefresh: _refresh,
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                   children: [
-                    if (error.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFF5F5),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: const Color(0xFFF1C4C4),
-                            width: 1.2,
-                          ),
-                        ),
-                        child: Text(
-                          error,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: red,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    if (activeOrder != null) ...[
-                      GestureDetector(
-                        onTap: _openActiveOrder,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF4FBF1),
-                            borderRadius: BorderRadius.circular(22),
-                            border: Border.all(color: green, width: 1.8),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x0A000000),
-                                blurRadius: 10,
-                                offset: Offset(0, 4),
-                              ),
-                            ],
-                          ),
+                    Row(
+                      children: [
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: orange,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: const Text(
-                                  'Активный заказ',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
                               Text(
-                                'Заказ №${activeOrder!['orderNumber']}',
+                                'Привет, $courierName',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 20,
+                                  fontSize: 25,
                                   fontWeight: FontWeight.w800,
                                   color: Colors.black,
                                 ),
                               ),
-                              const SizedBox(height: 14),
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Padding(
-                                    padding: EdgeInsets.only(top: 2),
-                                    child: Icon(
-                                      Icons.location_on_outlined,
-                                      size: 20,
-                                      color: textMuted,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          (activeOrder!['restaurantName'] ?? '')
-                                              .toString(),
-                                          style: const TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w700,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          (activeOrder!['restaurantAddress'] ??
-                                                  '')
-                                              .toString(),
-                                          style: const TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w500,
-                                            color: textMuted,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Padding(
-                                    padding: EdgeInsets.only(top: 2),
-                                    child: Icon(
-                                      Icons.location_on_outlined,
-                                      size: 20,
-                                      color: green,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      (activeOrder!['clientAddress'] ?? '')
-                                          .toString(),
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
-                                        color: textMuted,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'Ваш доход',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w500,
-                                            color: textMuted,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${activeOrder!['courierPayout']} ₸',
-                                          style: const TextStyle(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.w800,
-                                            color: darkGreen,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      const Text(
-                                        'Забрать до',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
-                                          color: textMuted,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        (activeOrder!['deadlineText'] ?? '—')
-                                            .toString(),
-                                        style: const TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w800,
-                                          color: orange,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 54,
-                                child: ElevatedButton(
-                                  onPressed: _isActiveOrderActionLoading
-                                      ? null
-                                      : _handleActiveOrderAction,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: darkGreen,
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                  ),
-                                  child: _isActiveOrderActionLoading
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Text(
-                                              _activeOrderActionLabel(),
-                                              style: const TextStyle(
-                                                fontSize: 17,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            const Icon(
-                                              Icons.arrow_forward_rounded,
-                                              size: 20,
-                                              color: Colors.white,
-                                            ),
-                                          ],
-                                        ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Сегодня: $_todayText',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFF667085),
                                 ),
                               ),
                             ],
                           ),
                         ),
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            IconButton.filledTonal(
+                              onPressed: _openNotifications,
+                              icon: const Icon(Icons.notifications_none_rounded),
+                            ),
+                            if (unreadCount > 0)
+                              Positioned(
+                                right: -2,
+                                top: -3,
+                                child: Container(
+                                  constraints: const BoxConstraints(minWidth: 20),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFDC2626),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(color: bg, width: 2),
+                                  ),
+                                  child: Text(
+                                    unreadCount > 99 ? '99+' : '$unreadCount',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _OnlineCard(
+                      isOnline: isOnline,
+                      loading: _changingOnline,
+                      onTap: _toggleOnline,
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _ErrorBanner(message: error),
+                    ],
+                    const SizedBox(height: 18),
+                    if (activeOrder != null) ...[
+                      _ActiveOrderCard(
+                        order: activeOrder!,
+                        onOpen: _openActiveOrder,
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 20),
                     ],
                     const Text(
                       'Статистика за сегодня',
@@ -857,46 +427,36 @@ class _HomePageState extends State<HomePage> {
                         color: Colors.black,
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
-                          child: _CompactStatCard(
-                            icon: Icons.trending_up_rounded,
-                            iconBg: const Color(0x143FAE2A),
-                            iconColor: green,
+                          child: _StatCard(
+                            icon: Icons.receipt_long_outlined,
                             value: '$todayOrders',
                             label: 'Заказов',
+                            accent: green,
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: _CompactStatCard(
-                            icon: Icons.payments_outlined,
-                            iconBg: const Color(0x142E7D32),
-                            iconColor: darkGreen,
-                            value: '$todayEarnings',
-                            label: 'Заработано',
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _CompactStatCard(
+                          child: _StatCard(
                             icon: Icons.check_circle_outline_rounded,
-                            iconBg: const Color(0x143FAE2A),
-                            iconColor: green,
                             value: '$todayCompleted',
-                            label: 'Завершено',
+                            label: 'Доставлено',
+                            accent: darkGreen,
                           ),
                         ),
                       ],
                     ),
-                    if (_isRefreshing) ...[
+                    const SizedBox(height: 10),
+                    _IncomeCard(amount: todayEarnings),
+                    if (_refreshing) ...[
                       const SizedBox(height: 18),
                       const Center(
                         child: SizedBox(
-                          width: 22,
-                          height: 22,
+                          width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
@@ -904,103 +464,6 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
-              decoration: const BoxDecoration(
-                color: bg,
-                border: Border(
-                  top: BorderSide(
-                    color: Color(0xFFE4E8EF),
-                    width: 1,
-                  ),
-                ),
-              ),
-              child: Column(
-                children: [
-                  Center(
-                    child: Text(
-                      _isChangingOnline
-                          ? 'Обновляем статус и геолокацию...'
-                          : isOnline
-                              ? 'Вы можете принимать заказы'
-                              : 'Включите статус, чтобы получать заказы',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: textMuted,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  GestureDetector(
-                    onTap: _isChangingOnline ? null : _toggleOnline,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: double.infinity,
-                      height: 76,
-                      decoration: BoxDecoration(
-                        color: isOnline ? darkGreen : const Color(0xFFEDEDF1),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: isOnline
-                              ? const Color(0xFF256B28)
-                              : borderColor,
-                          width: 1.4,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x14000000),
-                            blurRadius: 14,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (_isChangingOnline)
-                            SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: isOnline
-                                    ? Colors.white
-                                    : const Color(0xFF676B73),
-                              ),
-                            )
-                          else
-                            Container(
-                              width: 22,
-                              height: 22,
-                              decoration: BoxDecoration(
-                                color: isOnline
-                                    ? Colors.white
-                                    : const Color(0xFF7E7E86),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          const SizedBox(width: 14),
-                          Text(
-                            isOnline ? 'Онлайн' : 'Оффлайн',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              color: isOnline
-                                  ? Colors.white
-                                  : const Color(0xFF676B73),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1012,260 +475,69 @@ class _CourierHomeApi {
   final ApiClient _client;
 
   Future<Map<String, dynamic>> getMe() async {
-    final data = await _client.get('/couriers/me');
-    return _asMap(data);
+    return _asMap(await _client.get('/couriers/me'));
   }
 
   Future<Map<String, dynamic>?> getActiveOrder() async {
-    try {
-      final data = await _client.get('/orders/courier/active');
-      if (data == null) return null;
-      return _asMap(data);
-    } catch (_) {
-      return null;
-    }
-  }
+    final data = await _client.get('/orders/courier/active');
+    if (data == null) return null;
 
-  Future<Map<String, dynamic>> getFinanceSummary() async {
-    try {
-      final data = await _client.get('/couriers/me/finance/summary');
-      return _asMap(data);
-    } catch (_) {
-      return const <String, dynamic>{};
-    }
-  }
-
-  Future<_HomeTodayStats> getTodayStats() async {
-    final now = DateTime.now();
-    final from = _formatDate(now);
-    final to = _formatDate(now);
-
-    try {
-      final data = await _client.get(
-        '/orders/courier/my?page=1&limit=200&from=$from&to=$to',
-      );
-
-      final map = _asMap(data);
-      final items =
-          _extractList(map, const ['items']) ??
-          _extractList(map, const ['data', 'items']) ??
-          _extractList(map, const ['orders']) ??
-          _extractList(map, const ['data', 'orders']) ??
-          (data is List ? data : const []);
-
-      final todayOrdersRaw = items
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-
-      int orders = 0;
-      int completed = 0;
-      int earnings = 0;
-
-      for (final order in todayOrdersRaw) {
-        final assignedAt = _parseDateTime(
-          _readValue(order, const ['assignedAt']),
-        );
-        final createdAt = _parseDateTime(
-          _readValue(order, const ['createdAt']),
-        );
-        final deliveredAt = _parseDateTime(
-          _readValue(order, const ['deliveredAt']),
-        );
-
-        final status = (_readValue(order, const ['status']) ?? '')
-            .toString()
-            .trim()
-            .toUpperCase();
-
-        final courierFeeNet =
-            _tryInt(_readValue(order, const ['courierFee'])) ??
-                _resolveNetCourierPayout(order);
-
-        final orderDayBase = assignedAt ?? createdAt;
-        final isTodayOrder =
-            orderDayBase != null && _isSameDay(orderDayBase.toLocal(), now);
-
-        final isDeliveredToday =
-            deliveredAt != null &&
-            _isSameDay(deliveredAt.toLocal(), now) &&
-            status == 'DELIVERED';
-
-        if (isTodayOrder) {
-          orders += 1;
-        }
-
-        if (isDeliveredToday) {
-          completed += 1;
-          earnings += courierFeeNet;
-        }
-      }
-
-      return _HomeTodayStats(
-        orders: orders,
-        earnings: earnings,
-        completed: completed,
-      );
-    } catch (_) {
-      final finance = await getFinanceSummary();
-
-      return _HomeTodayStats(
-        orders: _readInt(
-          finance,
-          const ['todayOrders'],
-          fallbackKeys: const ['ordersToday', 'stats.todayOrders'],
-        ),
-        earnings: _readInt(
-          finance,
-          const ['todayEarnings'],
-          fallbackKeys: const [
-            'earningsToday',
-            'todayIncome',
-            'stats.todayEarnings',
-          ],
-        ),
-        completed: _readInt(
-          finance,
-          const ['todayCompleted'],
-          fallbackKeys: const [
-            'completedToday',
-            'completed',
-            'stats.todayCompleted',
-          ],
-        ),
-      );
-    }
+    final map = _asMap(data);
+    if (map.isEmpty) return null;
+    return map;
   }
 
   Future<int> getUnreadCount() async {
-    try {
-      final data = await _client.get('/notifications/unread-count');
-      final map = _asMap(data);
-
-      final count = _tryInt(map['count']);
-      if (count != null) return count;
-
-      final unreadCount = _tryInt(map['unreadCount']);
-      if (unreadCount != null) return unreadCount;
-    } catch (_) {
-      // fallback below
-    }
-
-    try {
-      final data = await _client.get('/notifications?page=1&limit=50');
-      final map = _asMap(data);
-
-      final direct = _tryInt(map['unreadCount']);
-      if (direct != null) return direct;
-
-      final meta = _readMap(map, const ['meta']);
-      final metaUnread = _tryInt(meta?['unreadCount']);
-      if (metaUnread != null) return metaUnread;
-
-      final items = _extractList(map, const ['items']) ?? const [];
-
-      return items
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .where((item) => item['isRead'] != true)
-          .length;
-    } catch (_) {
-      return 0;
-    }
+    final data = _asMap(await _client.get('/notifications/unread-count'));
+    return _int(data['count']) ?? _int(data['unreadCount']) ?? 0;
   }
 
   Future<void> setOnline(bool value) async {
-    await _client.patch('/couriers/me/online', {
-      'isOnline': value,
-      'source': 'mobile',
-    });
+    await _client.post('/couriers/me/online-status', {'isOnline': value});
   }
 
-  Future<void> updateCourierOrderStatus({
-    required String orderId,
-    required String status,
-  }) async {
-    await _client.patch('/orders/courier/$orderId/status', {
-      'status': status,
-    });
-  }
+  Future<_HomeTodayStats> getTodayStats() async {
+    final data = await _client.get('/orders/courier/my?page=1&limit=100');
+    final map = _asMap(data);
+    final items = (map['items'] is List ? map['items'] as List : const <dynamic>[])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e));
 
-  Map<String, dynamic> _asMap(dynamic value) {
-    if (value is Map<String, dynamic>) return value;
-    if (value is Map) return Map<String, dynamic>.from(value);
-    return <String, dynamic>{};
-  }
+    final today = DateTime.now();
+    var orders = 0;
+    var completed = 0;
+    var earnings = 0;
 
-  List<dynamic>? _extractList(
-    Map<String, dynamic> json,
-    List<String> path,
-  ) {
-    dynamic current = json;
+    for (final order in items) {
+      final assignedAt = DateTime.tryParse(_string(order['assignedAt']));
+      final createdAt = DateTime.tryParse(_string(order['createdAt']));
+      final deliveredAt = DateTime.tryParse(_string(order['deliveredAt']));
+      final status = _string(order['status']).toUpperCase();
 
-    for (final part in path) {
-      if (current is Map<String, dynamic> && current.containsKey(part)) {
-        current = current[part];
-      } else {
-        return null;
+      final base = assignedAt ?? createdAt;
+      if (base != null && _sameDay(base.toLocal(), today)) {
+        orders++;
+      }
+
+      if (status == 'DELIVERED' &&
+          deliveredAt != null &&
+          _sameDay(deliveredAt.toLocal(), today)) {
+        completed++;
+        final net = _int(order['courierFee']);
+        final gross = _int(order['courierFeeGross']) ?? 0;
+        final commission = _int(order['courierCommissionAmount']) ?? 0;
+        earnings += net ?? (gross - commission).clamp(0, 1 << 31);
       }
     }
 
-    return current is List ? current : null;
+    return _HomeTodayStats(
+      orders: orders,
+      earnings: earnings,
+      completed: completed,
+    );
   }
 
-  dynamic _readValue(
-    Map<String, dynamic> json,
-    List<String> path,
-  ) {
-    dynamic current = json;
-
-    for (final part in path) {
-      if (current is Map<String, dynamic> && current.containsKey(part)) {
-        current = current[part];
-      } else {
-        return null;
-      }
-    }
-
-    return current;
-  }
-
-  DateTime? _parseDateTime(dynamic value) {
-    if (value == null) return null;
-    if (value is DateTime) return value;
-    return DateTime.tryParse(value.toString());
-  }
-
-  bool _isSameDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
-  String _formatDate(DateTime value) {
-    final y = value.year.toString().padLeft(4, '0');
-    final m = value.month.toString().padLeft(2, '0');
-    final d = value.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-
-  int _resolveNetCourierPayout(Map<String, dynamic> order) {
-    final net = _tryInt(_readValue(order, const ['courierFee']));
-    if (net != null && net >= 0) return net;
-
-    final gross = _tryInt(
-          _readValue(order, const ['courierFeeGross']) ??
-              _readValue(order, const ['courierPayout']) ??
-              _readValue(order, const ['courierFeeApplied']),
-        ) ??
-        0;
-
-    final commission =
-        _tryInt(_readValue(order, const ['courierCommissionAmount'])) ?? 0;
-
-    final computed = gross - commission;
-    if (computed >= 0) return computed;
-
-    return 0;
-  }
+  void dispose() => _client.dispose();
 }
 
 class _HomeTodayStats {
@@ -1280,372 +552,447 @@ class _HomeTodayStats {
   final int completed;
 }
 
-Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
-  if (raw == null || raw.isEmpty) return null;
-
-  final restaurant = _readMap(raw, const ['restaurant']);
-  final address = _readMap(raw, const ['address']);
-  final client = _readMap(raw, const ['user']);
-
-  final orderNumber = _readString(
-    raw,
-    const ['number'],
-    fallbackKeys: const ['orderNumber'],
-    fallbackValue: '—',
-  );
-
-  final restaurantName = _readString(
-    raw,
-    const ['restaurantName'],
-    fallbackKeys: const ['restaurant.name', 'restaurant.titleRu'],
-    fallbackValue: '',
-  );
-
-  final restaurantAddress = _readString(
-    raw,
-    const ['restaurantAddress'],
-    fallbackKeys: const ['restaurant.address', 'pickupAddress'],
-    fallbackValue: '',
-  );
-
-  final clientAddress = _buildClientAddress(raw, address);
-  final payout = _resolveActiveOrderNetPayout(raw);
-
-  final deadlineText =
-      _formatTime(
-        _readNullableString(
-          raw,
-          const ['promisedAt'],
-          fallbackKeys: const ['deadline', 'pickupDeadline'],
-        ),
-      ) ??
-      '—';
-
-  return {
-    'id': _readString(raw, const ['id'], fallbackValue: ''),
-    'status': _readString(raw, const ['status'], fallbackValue: ''),
-    'orderNumber': orderNumber,
-    'restaurantName': restaurantName.isNotEmpty
-        ? restaurantName
-        : (restaurant?['name'] ?? '').toString(),
-    'restaurantAddress': restaurantAddress,
-    'clientAddress': clientAddress,
-    'courierPayout': payout,
-    'deadlineText': deadlineText,
-    'clientName': _buildClientName(client),
-  };
-}
-
-int _resolveActiveOrderNetPayout(Map<String, dynamic> raw) {
-  final net = _readInt(
-    raw,
-    const ['courierFee'],
-    fallbackKeys: const ['courierNetFee', 'courierNetPayout'],
-  );
-  if (net > 0) return net;
-
-  final gross = _readInt(
-    raw,
-    const ['courierFeeGross'],
-    fallbackKeys: const ['courierPayout', 'courierFeeApplied'],
-  );
-  final commission = _readInt(
-    raw,
-    const ['courierCommissionAmount'],
-  );
-
-  final computed = gross - commission;
-  return computed > 0 ? computed : 0;
-}
-
-String _buildClientAddress(
-  Map<String, dynamic> raw,
-  Map<String, dynamic>? address,
-) {
-  final direct = _readNullableString(
-    raw,
-    const ['clientAddress'],
-    fallbackKeys: const [
-      'deliveryAddress',
-      'deliveryAddressText',
-      'address.address',
-    ],
-  );
-  if (direct != null && direct.trim().isNotEmpty) {
-    return direct;
-  }
-
-  if (address == null || address.isEmpty) {
-    return '';
-  }
-
-  final mainAddress =
-      (address['address'] ?? address['title'] ?? '').toString().trim();
-
-  final entrance =
-      (address['entrance'] ?? address['door'] ?? '').toString().trim();
-
-  final floor = (address['floor'] ?? '').toString().trim();
-  final intercom = (address['intercom'] ?? '').toString().trim();
-
-  final parts = <String>[
-    if (mainAddress.isNotEmpty) mainAddress,
-    if (entrance.isNotEmpty) 'подъезд: $entrance',
-    if (floor.isNotEmpty) 'этаж: $floor',
-    if (intercom.isNotEmpty) 'домофон: $intercom',
-  ];
-
-  return parts.join(', ');
-}
-
-String _buildClientName(Map<String, dynamic>? client) {
-  if (client == null || client.isEmpty) return '';
-  final parts = <String>[
-    (client['firstName'] ?? '').toString().trim(),
-    (client['lastName'] ?? '').toString().trim(),
-  ].where((e) => e.isNotEmpty).toList();
-  return parts.join(' ');
-}
-
-String? _formatTime(String? iso) {
-  if (iso == null || iso.trim().isEmpty) return null;
-  final dt = DateTime.tryParse(iso);
-  if (dt == null) return null;
-  final local = dt.toLocal();
-  final hh = local.hour.toString().padLeft(2, '0');
-  final mm = local.minute.toString().padLeft(2, '0');
-  return '$hh:$mm';
-}
-
-Map<String, dynamic>? _readMap(
-  Map<String, dynamic> json,
-  List<String> path,
-) {
-  dynamic current = json;
-  for (final part in path) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      return null;
-    }
-  }
-
-  if (current is Map<String, dynamic>) return current;
-  if (current is Map) return Map<String, dynamic>.from(current);
-  return null;
-}
-
-String _readString(
-  Map<String, dynamic> json,
-  List<String> path, {
-  List<String> fallbackKeys = const [],
-  String fallbackValue = '',
-}) {
-  final first = _readNullableString(json, path);
-  if (first != null && first.trim().isNotEmpty) return first;
-
-  for (final key in fallbackKeys) {
-    final value = _readByKeyPath(json, key);
-    if (value != null) {
-      final text = value.toString().trim();
-      if (text.isNotEmpty) return text;
-    }
-  }
-
-  return fallbackValue;
-}
-
-String? _readNullableString(
-  Map<String, dynamic> json,
-  List<String> path, {
-  List<String> fallbackKeys = const [],
-}) {
-  dynamic current = json;
-  for (final part in path) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      current = null;
-      break;
-    }
-  }
-
-  if (current != null) {
-    final text = current.toString();
-    if (text.trim().isNotEmpty) return text;
-  }
-
-  for (final key in fallbackKeys) {
-    final value = _readByKeyPath(json, key);
-    if (value != null) {
-      final text = value.toString().trim();
-      if (text.isNotEmpty) return text;
-    }
-  }
-
-  return null;
-}
-
-bool _readBool(
-  Map<String, dynamic> json,
-  List<String> path, {
-  List<String> fallbackKeys = const [],
-}) {
-  dynamic current = json;
-  for (final part in path) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      current = null;
-      break;
-    }
-  }
-
-  final parsed = _tryBool(current);
-  if (parsed != null) return parsed;
-
-  for (final key in fallbackKeys) {
-    final fallback = _tryBool(_readByKeyPath(json, key));
-    if (fallback != null) return fallback;
-  }
-
-  return false;
-}
-
-int _readInt(
-  Map<String, dynamic> json,
-  List<String> path, {
-  List<String> fallbackKeys = const [],
-}) {
-  dynamic current = json;
-  for (final part in path) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      current = null;
-      break;
-    }
-  }
-
-  final parsed = _tryInt(current);
-  if (parsed != null) return parsed;
-
-  for (final key in fallbackKeys) {
-    final fallback = _tryInt(_readByKeyPath(json, key));
-    if (fallback != null) return fallback;
-  }
-
-  return 0;
-}
-
-dynamic _readByKeyPath(Map<String, dynamic> json, String keyPath) {
-  dynamic current = json;
-  for (final part in keyPath.split('.')) {
-    if (current is Map<String, dynamic> && current.containsKey(part)) {
-      current = current[part];
-    } else if (current is Map && current.containsKey(part)) {
-      current = current[part];
-    } else {
-      return null;
-    }
-  }
-  return current;
-}
-
-int? _tryInt(dynamic value) {
-  if (value is int) return value;
-  if (value is double) return value.round();
-  if (value is String) return int.tryParse(value);
-  return null;
-}
-
-bool? _tryBool(dynamic value) {
-  if (value is bool) return value;
-  if (value is String) {
-    final normalized = value.trim().toLowerCase();
-    if (normalized == 'true' || normalized == '1') return true;
-    if (normalized == 'false' || normalized == '0') return false;
-  }
-  return null;
-}
-
-class _CompactStatCard extends StatelessWidget {
-  const _CompactStatCard({
-    required this.icon,
-    required this.iconBg,
-    required this.iconColor,
-    required this.value,
-    required this.label,
+class _OnlineCard extends StatelessWidget {
+  const _OnlineCard({
+    required this.isOnline,
+    required this.loading,
+    required this.onTap,
   });
 
-  final IconData icon;
-  final Color iconBg;
-  final Color iconColor;
-  final String value;
-  final String label;
+  final bool isOnline;
+  final bool loading;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final background = isOnline
+        ? const Color(0xFF2F8731)
+        : const Color(0xFFEDEFF2);
+    final foreground = isOnline ? Colors.white : const Color(0xFF475467);
+
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: loading ? null : onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isOnline
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: loading
+                    ? Padding(
+                        padding: const EdgeInsets.all(11),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: foreground,
+                        ),
+                      )
+                    : Icon(
+                        isOnline
+                            ? Icons.location_on_rounded
+                            : Icons.location_off_outlined,
+                        color: foreground,
+                      ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isOnline ? 'Вы на линии' : 'Вы оффлайн',
+                      style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        color: foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      isOnline
+                          ? 'GPS работает для назначения и доставки'
+                          : 'Выйдите на линию, чтобы получать заказы',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: foreground.withValues(alpha: 0.82),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: foreground),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveOrderCard extends StatelessWidget {
+  const _ActiveOrderCard({required this.order, required this.onOpen});
+
+  final Map<String, dynamic> order;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final number = _string(order['number']);
+    final status = _statusLabel(_string(order['status']));
+    final restaurant = _string(order['restaurantName']);
+    final restaurantAddress = _string(order['restaurantAddress']);
+    final clientAddress = _string(order['clientAddress']);
+    final payout = _int(order['courierPayout']) ?? 0;
+
     return Container(
-      height: 126,
-      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFD8DDE6),
-          width: 1.3,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A000000),
-            blurRadius: 8,
-            offset: Offset(0, 3),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFDDE3EA)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: iconBg,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: iconColor,
-              size: 20,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  number.isEmpty ? 'Активный заказ' : 'Заказ №$number',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEF4FF),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  status,
+                  style: const TextStyle(
+                    color: Color(0xFF175CD3),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              color: Colors.black,
-              height: 1,
-            ),
+          const SizedBox(height: 14),
+          _Line(icon: Icons.storefront_outlined, text: restaurant),
+          if (restaurantAddress.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            _Line(icon: Icons.pin_drop_outlined, text: restaurantAddress),
+          ],
+          if (clientAddress.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            _Line(icon: Icons.flag_outlined, text: clientAddress),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Ваш доход: ${_money(payout)} ₸',
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF2F8731),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF7E8794),
-              height: 1.15,
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: FilledButton(
+              onPressed: onOpen,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF2F8731),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: const Text(
+                'Открыть заказ',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+class _Line extends StatelessWidget {
+  const _Line({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: const Color(0xFF667085)),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            text.isEmpty ? '—' : text,
+            style: const TextStyle(
+              fontSize: 14,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF344054),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.icon,
+    required this.value,
+    required this.label,
+    required this.accent,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE4E8EF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: accent),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF667085),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IncomeCard extends StatelessWidget {
+  const _IncomeCard({required this.amount});
+
+  final int amount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F9EE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFC8E8C1)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.payments_outlined, color: Color(0xFF2F8731)),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Заработано сегодня',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+          ),
+          Text(
+            '${_money(amount)} ₸',
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF2F8731),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5F5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF1C4C4)),
+      ),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFFB42318),
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
+  if (raw == null || raw.isEmpty) return null;
+
+  final fulfillmentType = _string(raw['fulfillmentType']).toUpperCase();
+  if (fulfillmentType == 'PICKUP') {
+    // Pickup is never a courier job. Ignore defensively even if stale data
+    // exists on the backend.
+    return null;
+  }
+
+  final restaurant = _map(raw['restaurant']);
+  final address = _map(raw['address']);
+  final gross = _int(raw['courierFeeGross']) ?? 0;
+  final commission = _int(raw['courierCommissionAmount']) ?? 0;
+  final net = _int(raw['courierFee']) ?? (gross - commission).clamp(0, 1 << 31);
+
+  return <String, dynamic>{
+    'id': _string(raw['id']),
+    'number': _string(raw['number']),
+    'status': _string(raw['status']),
+    'restaurantName': _string(restaurant?['nameRu']).isNotEmpty
+        ? _string(restaurant?['nameRu'])
+        : _string(raw['restaurantName']),
+    'restaurantAddress': _string(restaurant?['address']).isNotEmpty
+        ? _string(restaurant?['address'])
+        : _string(raw['restaurantAddress']),
+    'clientAddress': _buildAddress(address, raw),
+    'courierPayout': net,
+  };
+}
+
+String _buildAddress(
+  Map<String, dynamic>? address,
+  Map<String, dynamic> raw,
+) {
+  final direct = _string(raw['clientAddress']);
+  if (direct.isNotEmpty) return direct;
+  if (address == null) return '';
+
+  final main = _string(address['address']).isNotEmpty
+      ? _string(address['address'])
+      : _string(address['title']);
+  final entrance = _string(address['entrance']);
+  final floor = _string(address['floor']);
+  final door = _string(address['door']);
+  final intercom = _string(address['intercom']);
+
+  return <String>[
+    if (main.isNotEmpty) main,
+    if (entrance.isNotEmpty) 'подъезд: $entrance',
+    if (floor.isNotEmpty) 'этаж: $floor',
+    if (door.isNotEmpty) 'квартира/дверь: $door',
+    if (intercom.isNotEmpty) 'домофон: $intercom',
+  ].join(', ');
+}
+
+Map<String, dynamic> _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return <String, dynamic>{};
+}
+
+Map<String, dynamic>? _map(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return null;
+}
+
+String _string(dynamic value) => value?.toString().trim() ?? '';
+
+bool _bool(dynamic value) {
+  if (value is bool) return value;
+  final text = _string(value).toLowerCase();
+  return text == 'true' || text == '1';
+}
+
+int? _int(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(_string(value));
+}
+
+bool _sameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+String _money(int value) {
+  final negative = value < 0;
+  final digits = value.abs().toString();
+  final out = StringBuffer();
+
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) out.write(' ');
+    out.write(digits[i]);
+  }
+
+  return '${negative ? '-' : ''}$out';
+}
+
+String _statusLabel(String raw) {
+  switch (raw.toUpperCase()) {
+    case 'ACCEPTED':
+      return 'Принят';
+    case 'COOKING':
+      return 'Готовится';
+    case 'READY':
+      return 'Готов';
+    case 'ON_THE_WAY':
+      return 'В пути';
+    case 'DELIVERED':
+      return 'Доставлен';
+    default:
+      return 'Активный';
   }
 }
