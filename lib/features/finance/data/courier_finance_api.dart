@@ -11,44 +11,39 @@ class CourierFinanceApi {
     String? startDate,
     String? endDate,
   }) async {
-    final resolvedPeriod = _mapUiPeriodToBackend(period);
+    final resolvedPeriod = _normalizePeriod(period);
+    final range = _resolveRange(
+      resolvedPeriod,
+      startDate: startDate,
+      endDate: endDate,
+    );
 
-    final query = <String, String>{
-      'period': resolvedPeriod,
+    final commonQuery = <String, String>{
+      'from': range.from.toUtc().toIso8601String(),
+      'to': range.to.toUtc().toIso8601String(),
     };
-
-    if (resolvedPeriod == 'custom') {
-      final from = (startDate ?? '').trim();
-      final to = (endDate ?? '').trim();
-
-      if (from.isEmpty || to.isEmpty) {
-        throw ArgumentError(
-          'startDate and endDate are required for custom period',
-        );
-      }
-
-      query['from'] = from;
-      query['to'] = to;
-    }
 
     final summaryPath = _buildPath(
       '/couriers/me/finance/summary',
-      query,
+      commonQuery,
     );
 
     final ledgerPath = _buildPath(
       '/couriers/me/finance/ledger',
       {
-        ...query,
+        ...commonQuery,
         'page': '1',
         'limit': '200',
       },
     );
 
-    final summaryResponse = await _apiClient.get(summaryPath);
-    final ledgerResponse = await _apiClient.get(ledgerPath);
+    final results = await Future.wait<dynamic>([
+      _apiClient.get(summaryPath),
+      _apiClient.get(ledgerPath),
+    ]);
 
-    final summaryJson = _asMap(summaryResponse);
+    final summaryJson = _asMap(results[0]);
+    final ledgerResponse = results[1];
     final ledgerItems =
         _extractList(ledgerResponse, const ['items']) ??
         _extractList(ledgerResponse, const ['data', 'items']) ??
@@ -63,18 +58,79 @@ class CourierFinanceApi {
     );
   }
 
-  String _buildPath(String basePath, Map<String, String> query) {
-    if (query.isEmpty) return basePath;
+  _FinanceRange _resolveRange(
+    String period, {
+    String? startDate,
+    String? endDate,
+  }) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final endOfToday = today
+        .add(const Duration(days: 1))
+        .subtract(const Duration(milliseconds: 1));
 
-    final uri = Uri(
-      path: basePath,
-      queryParameters: query,
-    );
+    switch (period) {
+      case 'today':
+        return _FinanceRange(today, endOfToday);
+      case 'yesterday':
+        final yesterday = today.subtract(const Duration(days: 1));
+        return _FinanceRange(
+          yesterday,
+          today.subtract(const Duration(milliseconds: 1)),
+        );
+      case '7d':
+        return _FinanceRange(
+          today.subtract(const Duration(days: 6)),
+          endOfToday,
+        );
+      case 'custom':
+        final start = _parseLocalDate(startDate);
+        final end = _parseLocalDate(endDate);
 
-    return uri.toString();
+        if (start == null || end == null) {
+          throw ArgumentError(
+            'startDate and endDate are required for custom period',
+          );
+        }
+
+        final normalizedStart = DateTime(start.year, start.month, start.day);
+        final normalizedEnd = DateTime(end.year, end.month, end.day)
+            .add(const Duration(days: 1))
+            .subtract(const Duration(milliseconds: 1));
+
+        if (normalizedEnd.isBefore(normalizedStart)) {
+          throw ArgumentError('endDate must not be before startDate');
+        }
+
+        return _FinanceRange(normalizedStart, normalizedEnd);
+      case '30d':
+      default:
+        return _FinanceRange(
+          today.subtract(const Duration(days: 29)),
+          endOfToday,
+        );
+    }
   }
 
-  String _mapUiPeriodToBackend(String value) {
+  DateTime? _parseLocalDate(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+
+    final direct = DateTime.tryParse(raw);
+    if (direct != null) return direct;
+
+    final match = RegExp(r'^(\d{2})\.(\d{2})\.(\d{4})$').firstMatch(raw);
+    if (match == null) return null;
+
+    final day = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final year = int.tryParse(match.group(3)!);
+    if (day == null || month == null || year == null) return null;
+
+    return DateTime(year, month, day);
+  }
+
+  String _normalizePeriod(String value) {
     switch (value.trim().toLowerCase()) {
       case 'today':
         return 'today';
@@ -83,14 +139,17 @@ class CourierFinanceApi {
       case 'week':
       case '7d':
         return '7d';
-      case 'month':
-      case '30d':
-        return '30d';
       case 'custom':
         return 'custom';
+      case 'month':
+      case '30d':
       default:
         return '30d';
     }
+  }
+
+  String _buildPath(String basePath, Map<String, String> query) {
+    return Uri(path: basePath, queryParameters: query).toString();
   }
 
   Map<String, dynamic> _asMap(dynamic value) {
@@ -114,4 +173,11 @@ class CourierFinanceApi {
 
     return current is List ? current : null;
   }
+}
+
+class _FinanceRange {
+  const _FinanceRange(this.from, this.to);
+
+  final DateTime from;
+  final DateTime to;
 }
