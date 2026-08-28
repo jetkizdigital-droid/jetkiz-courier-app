@@ -5,9 +5,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 
 class CourierLocationService {
-  CourierLocationService({
-    ApiClient? apiClient,
-  }) : _apiClient = apiClient ?? ApiClient();
+  factory CourierLocationService() => _instance;
+
+  CourierLocationService._(this._apiClient);
+
+  static final CourierLocationService _instance =
+      CourierLocationService._(ApiClient());
 
   final ApiClient _apiClient;
 
@@ -79,9 +82,7 @@ class CourierLocationService {
     } on TimeoutException {
       final lastKnown = await Geolocator.getLastKnownPosition();
 
-      if (lastKnown != null) {
-        return lastKnown;
-      }
+      if (lastKnown != null) return lastKnown;
 
       throw CourierLocationException(
         'Не удалось получить геолокацию. Попробуйте ещё раз.',
@@ -96,8 +97,10 @@ class CourierLocationService {
     String source = 'manual',
   }) async {
     try {
-      final position = await getCurrentPosition();
-      return _sendPosition(position, source: source);
+      return _sendPosition(
+        await getCurrentPosition(),
+        source: source,
+      );
     } catch (e) {
       return CourierLocationSendResult(
         success: false,
@@ -166,6 +169,17 @@ class CourierLocationService {
   Future<CourierLocationStartResult> startTracking({
     Duration interval = heartbeatInterval,
   }) async {
+    if (_isTracking && _positionSubscription != null) {
+      final permission = await ensurePermission();
+      return CourierLocationStartResult(
+        started: permission.allowed,
+        message: permission.allowed
+            ? 'Геолокация уже активна'
+            : permission.message,
+        permission: permission,
+      );
+    }
+
     final permission = await ensurePermission();
 
     if (!permission.allowed) {
@@ -177,23 +191,19 @@ class CourierLocationService {
     }
 
     await stopTracking();
-
     _isTracking = true;
 
     final firstSend = await sendCurrentLocation(source: 'online_start');
 
-    final settings = _buildTrackingSettings(interval);
-
     _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: settings,
+      locationSettings: _buildTrackingSettings(interval),
     ).listen(
       (position) {
         if (!_isTracking) return;
         unawaited(_sendPosition(position, source: 'stream'));
       },
       onError: (_) {
-        // Потеря одного GPS update не должна останавливать рабочую смену.
-        // Следующий position event или повторный запуск экрана восстановит поток.
+        // A transient GPS error must not tear down the courier shift.
       },
       cancelOnError: false,
     );
@@ -223,10 +233,9 @@ class CourierLocationService {
       );
     }
 
-    return LocationSettings(
+    return const LocationSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 10,
-      timeLimit: null,
     );
   }
 
@@ -237,15 +246,16 @@ class CourierLocationService {
     _positionSubscription = null;
   }
 
-  Future<void> openLocationSettings() async {
-    await Geolocator.openLocationSettings();
-  }
+  Future<void> openLocationSettings() => Geolocator.openLocationSettings();
 
-  Future<void> openAppSettings() async {
-    await Geolocator.openAppSettings();
-  }
+  Future<void> openAppSettings() => Geolocator.openAppSettings();
 
-  Future<void> dispose() async {
+  /// Screen lifecycle must never stop courier tracking. The service is scoped
+  /// to the authenticated application session. Use [stopTracking] only when
+  /// the courier explicitly goes offline or logs out.
+  Future<void> dispose() async {}
+
+  Future<void> shutdown() async {
     await stopTracking();
     _apiClient.dispose();
   }
