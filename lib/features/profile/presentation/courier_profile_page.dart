@@ -21,6 +21,7 @@ class CourierProfilePage extends StatefulWidget {
 class _CourierProfilePageState extends State<CourierProfilePage> {
   static final Uri _offerUri = Uri.parse('https://jetkiz.asia/offer');
   static final Uri _privacyUri = Uri.parse('https://jetkiz.asia/privacy');
+  static final Uri _supportUri = Uri.parse('https://t.me/+oOgI_P4cqdZlNjFi');
 
   late final ApiClient _client;
   late final LogoutService _logout;
@@ -391,6 +392,12 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
                             ? null
                             : (value) => unawaited(_setPushEnabled(value)),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsTile(
+                      icon: Icons.support_agent_rounded,
+                      title: _locale.isKazakh ? 'Қолдау' : 'Поддержка',
+                      onTap: () => _open(_supportUri),
                     ),
                     const SizedBox(height: 8),
                     _SettingsTile(
