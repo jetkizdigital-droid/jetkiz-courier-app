@@ -7,8 +7,11 @@ class TokenStorage {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   Future<void> saveTokens(String accessToken, String refreshToken) async {
-    await _storage.write(key: _accessTokenKey, value: accessToken);
+    // Refresh tokens are rotated server-side. Persist the new refresh token
+    // first so there is never a window with a new access token paired with an
+    // already-revoked refresh token.
     await _storage.write(key: _refreshTokenKey, value: refreshToken);
+    await _storage.write(key: _accessTokenKey, value: accessToken);
   }
 
   Future<String?> getAccessToken() async {
