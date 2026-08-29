@@ -9,7 +9,10 @@ void main() {
     'status': 'READY',
     'createdAt': '2026-08-29T10:00:00.000Z',
     'fulfillmentType': 'DELIVERY',
-    'courierFee': 850,
+    'courierFee': 722,
+    'courierFeeGross': 850,
+    'courierCommissionPctApplied': 15,
+    'courierCommissionAmount': 128,
     'restaurant': {
       'nameRu': 'Тестовый ресторан',
       'address': 'ул. Абылай хана, 1',
@@ -36,6 +39,15 @@ void main() {
     expect(order.clientAddress, contains('этаж: 4'));
     expect(order.clientAddress, contains('квартира/дверь: 45'));
     expect(order.clientAddress, contains('домофон: 45К'));
+  });
+
+  test('courier finance snapshot is parsed without recomputing business rules', () {
+    final order = CourierOrderDetails.fromJson(base);
+
+    expect(order.courierFeeGross, 850);
+    expect(order.courierCommissionPctApplied, 15);
+    expect(order.courierCommissionAmount, 128);
+    expect(order.courierNetAmount, 722);
   });
 
   test('pickup order cannot expose courier actions', () {
