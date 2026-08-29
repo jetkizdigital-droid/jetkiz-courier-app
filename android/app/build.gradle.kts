@@ -23,7 +23,7 @@ val hasReleaseSigningConfig = listOf(
 ).all { key -> keystoreProperties.getProperty(key)?.isNotBlank() == true }
 
 android {
-    namespace = "com.example.jetkiz_courier_app"
+    namespace = "asia.jetkiz.courier"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -38,7 +38,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.jetkiz_courier_app"
+        applicationId = "asia.jetkiz.courier"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
