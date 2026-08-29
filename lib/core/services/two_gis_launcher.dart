@@ -18,8 +18,7 @@ class TwoGisLauncher {
     final origin = (originAddress ?? '').trim();
 
     final candidates = <Uri>[
-      if (Platform.isAndroid || Platform.isIOS)
-        _buildGeoUri(destination),
+      if (Platform.isAndroid || Platform.isIOS) _buildGeoUri(destination),
       _buildTwoGisSearchUri(destination),
       _buildGoogleMapsSearchUri(destination),
       if (origin.isNotEmpty) _buildGoogleMapsDirectionsUri(origin, destination),
@@ -46,8 +45,7 @@ class TwoGisLauncher {
     }
 
     final candidates = <Uri>[
-      if (Platform.isAndroid || Platform.isIOS)
-        _buildGeoUri(normalized),
+      if (Platform.isAndroid || Platform.isIOS) _buildGeoUri(normalized),
       _buildTwoGisSearchUri(normalized),
       _buildGoogleMapsSearchUri(normalized),
     ];
@@ -137,7 +135,7 @@ class TwoGisLauncher {
 
   static Future<bool> _tryLaunch(Uri uri) async {
     try {
-      return launchUrl(
+      return await launchUrl(
         uri,
         mode: LaunchMode.externalApplication,
       );
