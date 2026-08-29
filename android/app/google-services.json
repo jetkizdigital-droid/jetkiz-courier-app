@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:97147344656:android:6cd0191f41f7d9685f7795",
+        "android_client_info": {
+          "package_name": "asia.jetkiz.courier"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBzeYsBwMaIT3QKBPh70Q17jBk4EUTiRgM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:97147344656:android:5fcfa31ba162fc945f7795",
         "android_client_info": {
           "package_name": "com.example.jetkiz_courier_app"
@@ -48,6 +67,25 @@
         "mobilesdk_app_id": "1:97147344656:android:b48e048198f6d54f5f7795",
         "android_client_info": {
           "package_name": "com.example.jetkiz_restaurant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBzeYsBwMaIT3QKBPh70Q17jBk4EUTiRgM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:97147344656:android:09888a326ced5c1e5f7795",
+        "android_client_info": {
+          "package_name": "kz.jetkiz.app"
         }
       },
       "oauth_client": [],

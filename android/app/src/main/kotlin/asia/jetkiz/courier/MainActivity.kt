@@ -1,4 +1,4 @@
-package com.example.jetkiz_courier_app
+﻿package asia.jetkiz.courier
 
 import io.flutter.embedding.android.FlutterActivity
 
