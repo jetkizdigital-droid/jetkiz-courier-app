@@ -264,7 +264,7 @@ class _CourierOrderDetailsPageState extends State<CourierOrderDetailsPage>
                     _ItemsCard(items: order.items),
                   ],
                   const SizedBox(height: 12),
-                  _IncomeCard(amount: order.courierNetAmount ?? 0),
+                  _FinanceCard(order: order),
                   if (order.canMarkPickedUp || order.canMarkDelivered) ...[
                     const SizedBox(height: 18),
                     SizedBox(
@@ -485,34 +485,85 @@ class _ItemsCard extends StatelessWidget {
   }
 }
 
-class _IncomeCard extends StatelessWidget {
-  const _IncomeCard({required this.amount});
-  final int amount;
+class _FinanceCard extends StatelessWidget {
+  const _FinanceCard({required this.order});
+  final CourierOrderDetails order;
 
   @override
   Widget build(BuildContext context) {
     final locale = CourierLocaleController.instance;
+    final kk = locale.isKazakh;
+    final gross = order.courierFeeGross ?? order.courierNetAmount ?? 0;
+    final commission = order.courierCommissionAmount ?? 0;
+    final payout = order.courierNetAmount ?? 0;
+    final pct = order.courierCommissionPctApplied;
+    final commissionLabel = pct == null
+        ? (kk ? 'JETKIZ комиссиясы' : 'Комиссия JETKIZ')
+        : (kk ? 'JETKIZ комиссиясы, $pct%' : 'Комиссия JETKIZ, $pct%');
+
     return _Card(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              locale.t('details.income'),
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
           Text(
-            '${_money(amount)} ₸',
-            style: const TextStyle(
-              color: Color(0xFF2F8731),
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-            ),
+            kk ? 'Тапсырыс бойынша есеп' : 'Расчёт по заказу',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          _FinanceRow(
+            label: kk ? 'Жеткізу үшін есептелді' : 'Начислено за доставку',
+            amount: gross,
+          ),
+          const SizedBox(height: 8),
+          _FinanceRow(label: commissionLabel, amount: commission),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Divider(height: 1),
+          ),
+          _FinanceRow(
+            label: kk ? 'Төленуге тиіс' : 'К выплате',
+            amount: payout,
+            emphasized: true,
           ),
         ],
       ),
     );
   }
+}
+
+class _FinanceRow extends StatelessWidget {
+  const _FinanceRow({
+    required this.label,
+    required this.amount,
+    this.emphasized = false,
+  });
+
+  final String label;
+  final int amount;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: emphasized ? FontWeight.w800 : FontWeight.w500,
+          ),
+        ),
+      ),
+      const SizedBox(width: 12),
+      Text(
+        '${_money(amount)} ₸',
+        style: TextStyle(
+          color: emphasized ? const Color(0xFF2F8731) : null,
+          fontSize: emphasized ? 18 : 15,
+          fontWeight: emphasized ? FontWeight.w900 : FontWeight.w700,
+        ),
+      ),
+    ],
+  );
 }
 
 class _Card extends StatelessWidget {
