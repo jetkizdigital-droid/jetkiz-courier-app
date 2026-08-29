@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:jetkiz_courier_app/core/events/courier_order_events.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
 import 'package:jetkiz_courier_app/features/home/home_page.dart';
 import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
+import 'package:jetkiz_courier_app/features/orders/data/courier_order_details_api.dart';
 import 'package:jetkiz_courier_app/features/orders/data/courier_orders_api.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_item.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
@@ -22,12 +24,15 @@ class OrdersPage extends StatefulWidget {
 class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
   late final ApiClient _client;
   late final CourierOrdersApi _api;
+  late final CourierOrderDetailsApi _detailsApi;
 
   Timer? _pollTimer;
+  StreamSubscription<CourierOrderEvent>? _orderEventSubscription;
   bool _foreground = true;
   bool _loading = true;
   bool _refreshing = false;
   bool _polling = false;
+  String? _actionOrderId;
   String _error = '';
   OrdersDateRange _range = OrdersDateRange.today();
   List<CourierOrderItem> _orders = const [];
@@ -38,6 +43,11 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _client = ApiClient();
     _api = CourierOrdersApi(_client);
+    _detailsApi = CourierOrderDetailsApi(_client);
+    _orderEventSubscription = CourierOrderEvents.stream.listen((event) {
+      if (!_foreground) return;
+      unawaited(_load(silent: true));
+    });
     unawaited(_load());
     _startPolling();
   }
@@ -46,6 +56,7 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    unawaited(_orderEventSubscription?.cancel());
     _client.dispose();
     super.dispose();
   }
@@ -62,7 +73,7 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_foreground) unawaited(_load(silent: true, polling: true));
     });
   }
@@ -85,9 +96,6 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     }
 
     try {
-      // Active orders must always remain visible, while recent completed rows
-      // are filtered locally by the selected date range. Paging in the API
-      // prevents the old backend 100-row cap from silently truncating history.
       final rows = await _api.getCourierOrders(page: 1, limit: 500);
       final filtered = rows.where((order) {
         if (!_isTerminal(order)) return true;
@@ -114,7 +122,8 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     }
   }
 
-  bool _isTerminal(CourierOrderItem order) => order.isDelivered || order.isCanceled;
+  bool _isTerminal(CourierOrderItem order) =>
+      order.isDelivered || order.isCanceled;
 
   bool _matchesRange(CourierOrderItem order, OrdersDateRange range) {
     final date = _dateOnly(order.relevantDate.toLocal());
@@ -187,6 +196,62 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     if (mounted) await _load(silent: true);
   }
 
+  Future<void> _runQuickAction(CourierOrderItem order) async {
+    if (_actionOrderId != null) return;
+    if (!order.needsPickup && !order.isOnTheWay) return;
+
+    final isPickup = order.needsPickup;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Заказ №${order.number}'),
+        content: Text(
+          isPickup
+              ? 'Убедитесь, что вы забрали заказ №${order.number} из ресторана и что заказ хорошо упакован.'
+              : 'Убедитесь, что вы передаёте заказ №${order.number} по нужному адресу и правильному получателю.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Назад'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(isPickup ? 'Проверил' : 'Доставлено'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _actionOrderId = order.id);
+
+    try {
+      if (isPickup) {
+        await _detailsApi.markPickedUp(order.id);
+        _showSnackBar('Заказ №${order.number} забран из ресторана');
+      } else {
+        await _detailsApi.markDelivered(order.id);
+        _showSnackBar('Заказ №${order.number} доставлен');
+      }
+
+      await _load(silent: true);
+    } catch (error) {
+      _showSnackBar(_humanizeError(error));
+      await _load(silent: true);
+    } finally {
+      if (mounted) setState(() => _actionOrderId = null);
+    }
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _onBottomBarTap(int index) {
     if (index == 1) return;
 
@@ -216,8 +281,10 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
         case ApiErrorKind.sessionExpired:
         case ApiErrorKind.unauthorized:
           return 'Сессия истекла. Войдите заново.';
+        case ApiErrorKind.forbidden:
+          return 'Этот заказ больше недоступен курьеру.';
         default:
-          return 'Не удалось загрузить заказы.';
+          return 'Не удалось обновить заказ.';
       }
     }
 
@@ -337,12 +404,16 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
           child: ListView.separated(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
             itemCount: _orders.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (_, index) {
               final order = _orders[index];
               return CourierOrderCompactCard(
                 order: order,
                 onTap: () => _openOrder(order),
+                onPrimaryAction: order.needsPickup || order.isOnTheWay
+                    ? () => _runQuickAction(order)
+                    : null,
+                isPrimaryActionLoading: _actionOrderId == order.id,
               );
             },
           ),
