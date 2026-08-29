@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -312,7 +313,13 @@ class ApiClient {
     try {
       final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'));
       request.headers.addAll(headers);
-      request.files.add(await http.MultipartFile.fromPath(fieldName, filePath));
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          fieldName,
+          filePath,
+          contentType: _multipartContentTypeForPath(filePath),
+        ),
+      );
 
       final response = await http.Response.fromStream(
         await _client.send(request).timeout(_timeout),
@@ -407,6 +414,21 @@ class ApiClient {
         message: e.toString(),
       );
     }
+  }
+
+  MediaType _multipartContentTypeForPath(String filePath) {
+    final lower = filePath.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return MediaType('image', 'jpeg');
+    }
+    if (lower.endsWith('.png')) {
+      return MediaType('image', 'png');
+    }
+    if (lower.endsWith('.webp')) {
+      return MediaType('image', 'webp');
+    }
+
+    return MediaType('application', 'octet-stream');
   }
 
   Future<Never> _expireLocalSession({
