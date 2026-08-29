@@ -404,6 +404,7 @@ class _LedgerTile extends StatelessWidget {
   final _LedgerItem entry;
   @override
   Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
     final positive = entry.type != 'PAYOUT';
     final date = entry.createdAt?.toLocal();
     final dateText = date == null
@@ -423,7 +424,7 @@ class _LedgerTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  entry.type.isEmpty ? '—' : entry.type,
+                  _ledgerTitle(locale, entry.type),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 if (dateText.isNotEmpty)
@@ -449,6 +450,24 @@ class _LedgerTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+String _ledgerTitle(CourierLocaleController locale, String type) {
+  final kk = locale.isKazakh;
+  switch (type.toUpperCase()) {
+    case 'ORDER_PAYOUT':
+      return kk
+          ? 'Орындалған тапсырыс үшін төлем'
+          : 'Оплата за выполненный заказ';
+    case 'PAYOUT':
+      return kk ? 'Курьерге төлем' : 'Выплата курьеру';
+    case 'BONUS':
+      return 'Бонус';
+    case 'MANUAL_ADJUSTMENT':
+      return kk ? 'Түзету' : 'Корректировка';
+    default:
+      return kk ? 'Қаржылық операция' : 'Финансовая операция';
   }
 }
 
