@@ -294,7 +294,7 @@ class ApiClient {
         staleTokenRetries > 0 &&
         _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
       ) {
-        return _sendMultipart(
+        return await _sendMultipart(
           path: path,
           fieldName: fieldName,
           filePath: filePath,
@@ -310,7 +310,7 @@ class ApiClient {
       final refreshResult = await _refreshTokenOnce();
 
       if (refreshResult.isSuccess) {
-        return _sendMultipart(
+        return await _sendMultipart(
           path: path,
           fieldName: fieldName,
           filePath: filePath,
