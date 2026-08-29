@@ -7,6 +7,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../events/courier_order_events.dart';
+
 typedef PushIntentHandler = void Function(PushNavigationIntent intent);
 
 @pragma('vm:entry-point')
@@ -200,6 +202,7 @@ class PushMessageService {
   }
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
+    _emitOrderEvent(_normalizeData(message.data));
     await _showLocalNotification(message);
   }
 
@@ -308,6 +311,8 @@ class PushMessageService {
   }
 
   void _emitIntentFromData(Map<String, dynamic> data) {
+    _emitOrderEvent(data);
+
     final intent = PushNavigationIntent.fromData(data);
 
     if (intent == null) {
@@ -315,6 +320,12 @@ class PushMessageService {
     }
 
     _onIntent?.call(intent);
+  }
+
+  void _emitOrderEvent(Map<String, dynamic> data) {
+    CourierOrderEvents.emitFromPush(
+      data.map((key, value) => MapEntry(key.toString(), value?.toString() ?? '')),
+    );
   }
 
   String _resolveChannelId(RemoteMessage message, Map<String, dynamic> data) {
