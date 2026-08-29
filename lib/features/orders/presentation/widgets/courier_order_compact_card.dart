@@ -12,10 +12,6 @@ class CourierOrderCompactCard extends StatelessWidget {
 
   final CourierOrderItem order;
   final VoidCallback? onTap;
-
-  // Kept temporarily for source compatibility with OrdersPage. Status changes
-  // are intentionally not exposed from this compact card: courier must open
-  // order details and confirm pickup/delivery there.
   final Future<void> Function()? onPrimaryAction;
   final bool isPrimaryActionLoading;
 
@@ -79,7 +75,8 @@ class CourierOrderCompactCard extends StatelessWidget {
               _InfoRow(
                 icon: Icons.storefront_outlined,
                 title: order.restaurantName ?? 'Ресторан',
-                subtitle: order.restaurantAddress ?? 'Адрес ресторана не указан',
+                subtitle:
+                    order.restaurantAddress ?? 'Адрес ресторана не указан',
               ),
               const SizedBox(height: 10),
               _InfoRow(
@@ -114,26 +111,40 @@ class CourierOrderCompactCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (order.needsPickup || order.isOnTheWay) ...[
+              if (onPrimaryAction != null) ...[
                 const SizedBox(height: 14),
-                Container(
+                SizedBox(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text(
-                    'Откройте заказ, чтобы изменить статус',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF475467),
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: isPrimaryActionLoading
+                        ? null
+                        : () => onPrimaryAction?.call(),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: order.needsPickup
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF2F8731),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
+                    child: isPrimaryActionLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            order.needsPickup ? 'Забрал' : 'Доставлен',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
                   ),
                 ),
               ],
@@ -179,20 +190,48 @@ class CourierOrderCompactCard extends StatelessWidget {
   static _StatusStyle _statusStyle(String raw) {
     switch (raw.toUpperCase()) {
       case 'DELIVERED':
-        return const _StatusStyle('Доставлен', Color(0xFFEAF7EA), Color(0xFF2F8731));
+        return const _StatusStyle(
+          'Доставлен',
+          Color(0xFFEAF7EA),
+          Color(0xFF2F8731),
+        );
       case 'ON_THE_WAY':
-        return const _StatusStyle('В пути', Color(0xFFEEF4FF), Color(0xFF175CD3));
+        return const _StatusStyle(
+          'В пути',
+          Color(0xFFEEF4FF),
+          Color(0xFF175CD3),
+        );
       case 'READY':
-        return const _StatusStyle('Готов', Color(0xFFFFF4E5), Color(0xFFB54708));
+        return const _StatusStyle(
+          'Готов',
+          Color(0xFFFFF4E5),
+          Color(0xFFB54708),
+        );
       case 'COOKING':
-        return const _StatusStyle('Готовится', Color(0xFFF2F4F7), Color(0xFF344054));
+        return const _StatusStyle(
+          'Готовится',
+          Color(0xFFF2F4F7),
+          Color(0xFF344054),
+        );
       case 'ACCEPTED':
-        return const _StatusStyle('Принят', Color(0xFFF2F4F7), Color(0xFF344054));
+        return const _StatusStyle(
+          'Принят',
+          Color(0xFFF2F4F7),
+          Color(0xFF344054),
+        );
       case 'CANCELED':
       case 'CANCELLED':
-        return const _StatusStyle('Отменён', Color(0xFFFDECEC), Color(0xFFDC2626));
+        return const _StatusStyle(
+          'Отменён',
+          Color(0xFFFDECEC),
+          Color(0xFFDC2626),
+        );
       default:
-        return const _StatusStyle('Статус', Color(0xFFF2F4F7), Color(0xFF667085));
+        return const _StatusStyle(
+          'Статус',
+          Color(0xFFF2F4F7),
+          Color(0xFF667085),
+        );
     }
   }
 }
