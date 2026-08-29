@@ -13,6 +13,7 @@ class CourierOrderDetails {
     this.promisedAt,
     this.courierFee,
     this.courierFeeGross,
+    this.courierCommissionPctApplied,
     this.courierCommissionAmount,
     this.restaurantName,
     this.restaurantAddress,
@@ -36,6 +37,7 @@ class CourierOrderDetails {
   final DateTime? promisedAt;
   final int? courierFee;
   final int? courierFeeGross;
+  final int? courierCommissionPctApplied;
   final int? courierCommissionAmount;
   final String? restaurantName;
   final String? restaurantAddress;
@@ -107,6 +109,9 @@ class CourierOrderDetails {
       promisedAt: _date(json['promisedAt']),
       courierFee: _nullableInt(json['courierFee']),
       courierFeeGross: _nullableInt(json['courierFeeGross']),
+      courierCommissionPctApplied: _nullableInt(
+        json['courierCommissionPctApplied'],
+      ),
       courierCommissionAmount: _nullableInt(json['courierCommissionAmount']),
       restaurantName: _firstNonEmpty([
         restaurant?['nameRu'],
