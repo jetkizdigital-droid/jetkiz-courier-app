@@ -97,7 +97,7 @@ class CourierLocationService {
     String source = 'manual',
   }) async {
     try {
-      return _sendPosition(
+      return await _sendPosition(
         await getCurrentPosition(),
         source: source,
       );
