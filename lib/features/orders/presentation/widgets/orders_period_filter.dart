@@ -1,18 +1,9 @@
 import 'package:flutter/material.dart';
 
-enum OrdersPeriodType {
-  today,
-  week,
-  month,
-  custom,
-}
+enum OrdersPeriodType { today, week, month, custom }
 
 class OrdersDateRange {
-  const OrdersDateRange({
-    required this.type,
-    this.from,
-    this.to,
-  });
+  const OrdersDateRange({required this.type, this.from, this.to});
 
   final OrdersPeriodType type;
   final DateTime? from;
@@ -39,33 +30,21 @@ class OrdersDateRange {
   static OrdersDateRange today() {
     final now = DateTime.now();
     final date = DateTime(now.year, now.month, now.day);
-    return OrdersDateRange(
-      type: OrdersPeriodType.today,
-      from: date,
-      to: date,
-    );
+    return OrdersDateRange(type: OrdersPeriodType.today, from: date, to: date);
   }
 
   static OrdersDateRange week() {
     final now = DateTime.now();
     final end = DateTime(now.year, now.month, now.day);
     final start = end.subtract(const Duration(days: 6));
-    return OrdersDateRange(
-      type: OrdersPeriodType.week,
-      from: start,
-      to: end,
-    );
+    return OrdersDateRange(type: OrdersPeriodType.week, from: start, to: end);
   }
 
   static OrdersDateRange month() {
     final now = DateTime.now();
     final end = DateTime(now.year, now.month, now.day);
     final start = end.subtract(const Duration(days: 29));
-    return OrdersDateRange(
-      type: OrdersPeriodType.month,
-      from: start,
-      to: end,
-    );
+    return OrdersDateRange(type: OrdersPeriodType.month, from: start, to: end);
   }
 
   static OrdersDateRange custom({

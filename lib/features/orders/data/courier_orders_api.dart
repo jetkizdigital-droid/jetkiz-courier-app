@@ -104,10 +104,7 @@ class CourierOrdersApi {
   }
 
   bool _isPickup(Map<String, dynamic> item) {
-    return (item['fulfillmentType'] ?? '')
-            .toString()
-            .trim()
-            .toUpperCase() ==
+    return (item['fulfillmentType'] ?? '').toString().trim().toUpperCase() ==
         'PICKUP';
   }
 

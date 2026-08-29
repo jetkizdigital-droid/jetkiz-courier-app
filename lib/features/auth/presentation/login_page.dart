@@ -140,7 +140,9 @@ class _LoginPageState extends State<LoginPage> {
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight - 52),
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - 52,
+                ),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 440),
@@ -208,7 +210,9 @@ class _LoginPageState extends State<LoginPage> {
                               Container(
                                 width: 1,
                                 height: 24,
-                                margin: const EdgeInsets.symmetric(horizontal: 12),
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
                                 color: inputBorder,
                               ),
                               Expanded(
@@ -216,7 +220,9 @@ class _LoginPageState extends State<LoginPage> {
                                   controller: _phoneController,
                                   keyboardType: TextInputType.phone,
                                   textInputAction: TextInputAction.next,
-                                  autofillHints: const [AutofillHints.telephoneNumber],
+                                  autofillHints: const [
+                                    AutofillHints.telephoneNumber,
+                                  ],
                                   onChanged: _onPhoneChanged,
                                   style: const TextStyle(
                                     fontSize: 18,
@@ -263,7 +269,10 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
-                              borderSide: const BorderSide(color: green, width: 2),
+                              borderSide: const BorderSide(
+                                color: green,
+                                width: 2,
+                              ),
                             ),
                             suffixIcon: IconButton(
                               onPressed: () {
@@ -296,26 +305,36 @@ class _LoginPageState extends State<LoginPage> {
                           height: 60,
                           child: ElevatedButton(
                             onPressed: _canSubmit ? _submit : null,
-                            style: ElevatedButton.styleFrom(
-                              elevation: 0,
-                              backgroundColor: green,
-                              disabledBackgroundColor: const Color(0xFFE5E7EB),
-                              foregroundColor: Colors.white,
-                              disabledForegroundColor: const Color(0xFF98A2B3),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                            ).copyWith(
-                              backgroundColor: WidgetStateProperty.resolveWith((states) {
-                                if (states.contains(WidgetState.disabled)) {
-                                  return const Color(0xFFE5E7EB);
-                                }
-                                if (states.contains(WidgetState.pressed)) {
-                                  return darkGreen;
-                                }
-                                return green;
-                              }),
-                            ),
+                            style:
+                                ElevatedButton.styleFrom(
+                                  elevation: 0,
+                                  backgroundColor: green,
+                                  disabledBackgroundColor: const Color(
+                                    0xFFE5E7EB,
+                                  ),
+                                  foregroundColor: Colors.white,
+                                  disabledForegroundColor: const Color(
+                                    0xFF98A2B3,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ).copyWith(
+                                  backgroundColor:
+                                      WidgetStateProperty.resolveWith((states) {
+                                        if (states.contains(
+                                          WidgetState.disabled,
+                                        )) {
+                                          return const Color(0xFFE5E7EB);
+                                        }
+                                        if (states.contains(
+                                          WidgetState.pressed,
+                                        )) {
+                                          return darkGreen;
+                                        }
+                                        return green;
+                                      }),
+                                ),
                             child: _authController.isLoading
                                 ? const SizedBox(
                                     width: 22,
@@ -351,16 +370,15 @@ class _LoginPageState extends State<LoginPage> {
                           children: [
                             const Text(
                               'Продолжая вход, вы принимаете ',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: subtitle,
-                              ),
+                              style: TextStyle(fontSize: 13, color: subtitle),
                             ),
                             TextButton(
                               onPressed: _openOffer,
                               style: TextButton.styleFrom(
                                 foregroundColor: const Color(0xFF2563EB),
-                                padding: const EdgeInsets.symmetric(horizontal: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 3,
+                                ),
                                 minimumSize: const Size(0, 36),
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 import 'package:jetkiz_courier_app/features/notifications/data/courier_notifications_api.dart';
 import 'package:jetkiz_courier_app/features/notifications/domain/courier_notification_item.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
-import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -65,12 +64,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
         _error = 'Не удалось загрузить уведомления';
       });
     } finally {
-      if (!mounted) return;
-
-      setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
+      }
     }
   }
 
@@ -95,11 +94,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
     } catch (_) {
       _showSnackBar('Не удалось отметить уведомления');
     } finally {
-      if (!mounted) return;
-
-      setState(() {
-        _isMarkingAll = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isMarkingAll = false;
+        });
+      }
     }
   }
 
@@ -135,7 +134,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final action = (item.action ?? '').trim().toLowerCase();
     final type = item.type.toUpperCase();
 
-    final shouldOpenOrder = orderId.isNotEmpty &&
+    final shouldOpenOrder =
+        orderId.isNotEmpty &&
         (screen == 'order' ||
             route == 'orders' ||
             action == 'open_order' ||
@@ -143,36 +143,28 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
     if (shouldOpenOrder) {
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OrderDetailsPage(orderId: orderId),
-        ),
+        MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: orderId)),
       );
       return;
     }
 
     if (screen == 'orders' || route == 'orders') {
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const OrdersPage(),
-        ),
+        MaterialPageRoute(builder: (_) => const CourierShell(initialIndex: 1)),
       );
       return;
     }
 
     if (screen == 'profile' || route == 'profile') {
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const ProfilePage(),
-        ),
+        MaterialPageRoute(builder: (_) => const CourierShell(initialIndex: 3)),
       );
       return;
     }
 
     if (orderId.isNotEmpty) {
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OrderDetailsPage(orderId: orderId),
-        ),
+        MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: orderId)),
       );
       return;
     }
@@ -220,9 +212,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
   void _showSnackBar(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -259,8 +249,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     ),
             ),
           IconButton(
-            onPressed:
-                _isRefreshing || _isLoading ? null : () => _load(silent: true),
+            onPressed: _isRefreshing || _isLoading
+                ? null
+                : () => _load(silent: true),
             icon: _isRefreshing
                 ? const SizedBox(
                     width: 18,
@@ -278,17 +269,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF489F2A),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF489F2A)),
       );
     }
 
     if (_error.isNotEmpty && _items.isEmpty) {
-      return _ErrorState(
-        message: _error,
-        onRetry: () => _load(),
-      );
+      return _ErrorState(message: _error, onRetry: () => _load());
     }
 
     if (_items.isEmpty) {
@@ -297,10 +283,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         onRefresh: () => _load(silent: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 140),
-            _EmptyState(),
-          ],
+          children: const [SizedBox(height: 140), _EmptyState()],
         ),
       );
     }
@@ -311,7 +294,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         itemCount: _items.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
           final item = _items[index];
 
@@ -391,8 +374,9 @@ class _NotificationTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 15,
-                        fontWeight:
-                            isUnread ? FontWeight.w800 : FontWeight.w700,
+                        fontWeight: isUnread
+                            ? FontWeight.w800
+                            : FontWeight.w700,
                         color: Colors.black,
                       ),
                     ),
@@ -437,10 +421,7 @@ class _NotificationTile extends StatelessWidget {
                 ),
               ],
               const SizedBox(width: 4),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF98A2B3),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF98A2B3)),
             ],
           ),
         ),
@@ -491,10 +472,7 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({
-    required this.message,
-    required this.onRetry,
-  });
+  const _ErrorState({required this.message, required this.onRetry});
 
   final String message;
   final Future<void> Function() onRetry;

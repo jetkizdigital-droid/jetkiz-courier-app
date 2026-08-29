@@ -6,10 +6,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:jetkiz_courier_app/core/auth/logout_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
-import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
-import 'package:jetkiz_courier_app/features/home/home_page.dart';
-import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -138,7 +134,10 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() => _loggingOut = true);
 
     try {
-      if (await _api.hasActiveDelivery()) {
+      final hasActiveDelivery = await _api.hasActiveDelivery();
+      if (!mounted) return;
+
+      if (hasActiveDelivery) {
         _showSnackBar('Сначала завершите активную доставку, затем выйдите.');
         return;
       }
@@ -184,21 +183,6 @@ class _ProfilePageState extends State<ProfilePage> {
     if (!opened) _showSnackBar('Не удалось открыть страницу.');
   }
 
-  void _navigateBottom(int index) {
-    if (index == 3) return;
-
-    final Widget page = switch (index) {
-      0 => const HomePage(),
-      1 => const OrdersPage(),
-      2 => const FinancePage(),
-      _ => const ProfilePage(),
-    };
-
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => page),
-    );
-  }
-
   String _humanizeError(Object error) {
     if (error is ApiException) {
       switch (error.kind) {
@@ -228,10 +212,6 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: CourierBottomBar(
-        currentIndex: 3,
-        onTap: _navigateBottom,
-      ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -309,7 +289,9 @@ class _ProfilePageState extends State<ProfilePage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.logout_rounded),
                         label: const Text(
@@ -343,19 +325,14 @@ class _CourierProfileApi {
     final profile = _map(json['courierProfile']) ?? _map(json['profile']);
 
     return _CourierMe(
-      firstName: _firstText([
-        json['firstName'],
-        profile?['firstName'],
-      ]),
-      lastName: _firstText([
-        json['lastName'],
-        profile?['lastName'],
-      ]),
+      firstName: _firstText([json['firstName'], profile?['firstName']]),
+      lastName: _firstText([json['lastName'], profile?['lastName']]),
       avatarUrl: _normalizeImageUrl(
         _firstText([json['avatarUrl'], profile?['avatarUrl']]),
       ),
       isOnline: _bool(json['isOnline']) || _bool(profile?['isOnline']),
-      ordersCount: _int(json['ordersCount']) ??
+      ordersCount:
+          _int(json['ordersCount']) ??
           _int(_map(json['stats'])?['completedOrders']) ??
           0,
     );
@@ -441,8 +418,9 @@ class _ProfileHeader extends StatelessWidget {
                 CircleAvatar(
                   radius: 36,
                   backgroundColor: const Color(0xFFE5E7EB),
-                  backgroundImage:
-                      avatarUrl == null ? null : NetworkImage(avatarUrl!),
+                  backgroundImage: avatarUrl == null
+                      ? null
+                      : NetworkImage(avatarUrl!),
                   child: avatarUrl == null
                       ? const Icon(Icons.person_rounded, size: 34)
                       : null,
@@ -531,18 +509,12 @@ class _Metric extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 3),
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF667085),
-            ),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF667085)),
           ),
         ],
       ),

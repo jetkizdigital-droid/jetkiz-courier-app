@@ -26,7 +26,8 @@ class CourierNotificationItem {
   final String? action;
 
   factory CourierNotificationItem.fromJson(Map<String, dynamic> json) {
-    final data = _readMap(json['data']) ??
+    final data =
+        _readMap(json['data']) ??
         _readMap(json['payload']) ??
         _readMap(json['metadata']) ??
         <String, dynamic>{};
@@ -57,7 +58,8 @@ class CourierNotificationItem {
       data['type'],
     ]);
 
-    final isRead = _readBool(json['isRead']) ||
+    final isRead =
+        _readBool(json['isRead']) ||
         _readBool(json['read']) ||
         json['readAt'] != null;
 
@@ -73,20 +75,11 @@ class CourierNotificationItem {
       data['id'],
     ]);
 
-    final screen = _firstNullableNotEmpty([
-      json['screen'],
-      data['screen'],
-    ]);
+    final screen = _firstNullableNotEmpty([json['screen'], data['screen']]);
 
-    final route = _firstNullableNotEmpty([
-      json['route'],
-      data['route'],
-    ]);
+    final route = _firstNullableNotEmpty([json['route'], data['route']]);
 
-    final action = _firstNullableNotEmpty([
-      json['action'],
-      data['action'],
-    ]);
+    final action = _firstNullableNotEmpty([json['action'], data['action']]);
 
     return CourierNotificationItem(
       id: id,
@@ -103,9 +96,7 @@ class CourierNotificationItem {
     );
   }
 
-  CourierNotificationItem copyWith({
-    bool? isRead,
-  }) {
+  CourierNotificationItem copyWith({bool? isRead}) {
     return CourierNotificationItem(
       id: id,
       title: title,

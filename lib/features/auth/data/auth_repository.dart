@@ -6,14 +6,8 @@ class AuthRepository {
 
   final AuthApi _api;
 
-  Future<CourierLoginResult> loginCourier(
-    String phone,
-    String password,
-  ) async {
-    final result = await _api.loginCourier(
-      phone: phone,
-      password: password,
-    );
+  Future<CourierLoginResult> loginCourier(String phone, String password) async {
+    final result = await _api.loginCourier(phone: phone, password: password);
 
     final passwordChangeRequired = result['passwordChangeRequired'] == true;
 
@@ -23,14 +17,13 @@ class AuthRepository {
 
       return CourierLoginResult.passwordChangeRequired(
         phone: normalizedPhone,
-        temporaryPasswordExpiresAt:
-            expiresAtRaw == null ? null : DateTime.tryParse(expiresAtRaw),
+        temporaryPasswordExpiresAt: expiresAtRaw == null
+            ? null
+            : DateTime.tryParse(expiresAtRaw),
       );
     }
 
-    return CourierLoginResult.authenticated(
-      session: _parseSession(result),
-    );
+    return CourierLoginResult.authenticated(session: _parseSession(result));
   }
 
   Future<AuthSession> changeTemporaryPassword({
@@ -55,10 +48,7 @@ class AuthRepository {
       throw const FormatException('Auth tokens are missing in server response');
     }
 
-    return AuthSession(
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-    );
+    return AuthSession(accessToken: accessToken, refreshToken: refreshToken);
   }
 
   void dispose() {

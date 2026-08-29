@@ -2,9 +2,8 @@ import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/notifications/domain/courier_notification_item.dart';
 
 class CourierNotificationsApi {
-  CourierNotificationsApi({
-    ApiClient? apiClient,
-  }) : _apiClient = apiClient ?? ApiClient();
+  CourierNotificationsApi({ApiClient? apiClient})
+    : _apiClient = apiClient ?? ApiClient();
 
   final ApiClient _apiClient;
 
@@ -26,9 +25,8 @@ class CourierNotificationsApi {
     final items = itemsRaw
         .whereType<Map>()
         .map(
-          (item) => CourierNotificationItem.fromJson(
-            Map<String, dynamic>.from(item),
-          ),
+          (item) =>
+              CourierNotificationItem.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
 
@@ -41,10 +39,7 @@ class CourierNotificationsApi {
         _readInt(_readMap(map, const ['data'])?['unreadCount']) ??
         items.where((item) => !item.isRead).length;
 
-    return CourierNotificationsResult(
-      items: items,
-      unreadCount: unreadCount,
-    );
+    return CourierNotificationsResult(items: items, unreadCount: unreadCount);
   }
 
   Future<int> getUnreadCount() async {

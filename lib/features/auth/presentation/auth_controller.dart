@@ -8,12 +8,7 @@ import '../domain/auth_entity.dart';
 import '../domain/auth_usecase.dart';
 
 class AuthController extends ChangeNotifier {
-  AuthController()
-    : _useCase = AuthUseCase(
-        AuthRepository(
-          AuthApi(),
-        ),
-      );
+  AuthController() : _useCase = AuthUseCase(AuthRepository(AuthApi()));
 
   final AuthUseCase _useCase;
 

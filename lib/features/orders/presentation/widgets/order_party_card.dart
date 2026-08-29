@@ -57,17 +57,11 @@ class OrderPartyCard extends StatelessWidget {
                 ),
               if ((address ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
-                _Line(
-                  icon: Icons.location_on_outlined,
-                  text: address!,
-                ),
+                _Line(icon: Icons.location_on_outlined, text: address!),
               ],
               if ((phone ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
-                _Line(
-                  icon: Icons.phone_outlined,
-                  text: phone!,
-                ),
+                _Line(icon: Icons.phone_outlined, text: phone!),
               ],
               if ((comment ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 12),
@@ -138,10 +132,7 @@ class OrderPartyCard extends StatelessWidget {
 }
 
 class _Line extends StatelessWidget {
-  const _Line({
-    required this.icon,
-    required this.text,
-  });
+  const _Line({required this.icon, required this.text});
 
   final IconData icon;
   final String text;

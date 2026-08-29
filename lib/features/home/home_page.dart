@@ -1,14 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:jetkiz_courier_app/core/events/courier_order_events.dart';
 import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
-import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
-import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
 import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
-import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -23,6 +20,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final CourierLocationService _location = CourierLocationService();
 
   Timer? _pollTimer;
+  StreamSubscription<CourierOrderEvent>? _orderEventSubscription;
   bool _foreground = true;
   bool _loading = true;
   bool _refreshing = false;
@@ -44,8 +42,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _client = ApiClient();
     _api = _CourierHomeApi(_client);
+    _orderEventSubscription = CourierOrderEvents.stream.listen((event) {
+      if (!_foreground) return;
+      unawaited(_load(silent: true));
+    });
     unawaited(_load());
-    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_foreground) unawaited(_pollOperationalState());
     });
   }
@@ -54,6 +56,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    unawaited(_orderEventSubscription?.cancel());
     _client.dispose();
     super.dispose();
   }
@@ -227,26 +230,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final id = _text(_activeOrder?['id']);
     if (id.isEmpty) return;
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: id)),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: id)));
 
     if (mounted) await _load(silent: true);
-  }
-
-  void _onBottomBarTap(int index) {
-    if (index == 0) return;
-
-    final Widget page = switch (index) {
-      1 => const OrdersPage(),
-      2 => const FinancePage(),
-      3 => const ProfilePage(),
-      _ => const HomePage(),
-    };
-
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => page),
-    );
   }
 
   String _humanizeError(Object error) {
@@ -283,10 +271,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: CourierBottomBar(
-        currentIndex: 0,
-        onTap: _onBottomBarTap,
-      ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -404,7 +388,9 @@ class _CourierHomeApi {
     final raw = _asMap(
       await _client.get('/orders/courier/my?page=1&limit=100'),
     );
-    final values = raw['items'] is List ? raw['items'] as List : const <dynamic>[];
+    final values = raw['items'] is List
+        ? raw['items'] as List
+        : const <dynamic>[];
     final today = DateTime.now();
     var orders = 0;
     var completed = 0;
@@ -489,10 +475,7 @@ class _HomeHeader extends StatelessWidget {
               const SizedBox(height: 4),
               const Text(
                 'Рабочая смена JETKIZ',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF667085),
-                ),
+                style: TextStyle(fontSize: 14, color: Color(0xFF667085)),
               ),
             ],
           ),
@@ -715,16 +698,10 @@ class _MetricCard extends StatelessWidget {
         children: [
           Text(
             value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 3),
-          Text(
-            label,
-            style: const TextStyle(color: Color(0xFF667085)),
-          ),
+          Text(label, style: const TextStyle(color: Color(0xFF667085))),
         ],
       ),
     );
@@ -804,8 +781,8 @@ Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
   final address = _map(raw['address']);
   final gross = _int(raw['courierFeeGross']) ?? 0;
   final commission = _int(raw['courierCommissionAmount']) ?? 0;
-  final payout = _int(raw['courierFee']) ??
-      (gross - commission).clamp(0, 1 << 31).toInt();
+  final payout =
+      _int(raw['courierFee']) ?? (gross - commission).clamp(0, 1 << 31).toInt();
 
   return <String, dynamic>{
     'id': _text(raw['id']),
@@ -821,10 +798,7 @@ Map<String, dynamic>? _normalizeActiveOrder(Map<String, dynamic>? raw) {
   };
 }
 
-String _buildAddress(
-  Map<String, dynamic>? address,
-  Map<String, dynamic> raw,
-) {
+String _buildAddress(Map<String, dynamic>? address, Map<String, dynamic> raw) {
   final direct = _firstText([
     raw['clientAddress'],
     raw['deliveryAddress'],

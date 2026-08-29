@@ -7,26 +7,22 @@ class CourierOrderDetailsApi {
   final ApiClient _client;
 
   Future<CourierOrderDetails> getOrderDetails(String orderId) async {
-    return _parseDeliveryOrder(
-      await _client.get('/orders/courier/$orderId'),
-    );
+    return _parseDeliveryOrder(await _client.get('/orders/courier/$orderId'));
   }
 
   Future<CourierOrderDetails> markPickedUp(String orderId) async {
     return _parseDeliveryOrder(
-      await _client.patch(
-        '/orders/courier/$orderId/status',
-        {'status': 'ON_THE_WAY'},
-      ),
+      await _client.patch('/orders/courier/$orderId/status', {
+        'status': 'ON_THE_WAY',
+      }),
     );
   }
 
   Future<CourierOrderDetails> markDelivered(String orderId) async {
     return _parseDeliveryOrder(
-      await _client.patch(
-        '/orders/courier/$orderId/status',
-        {'status': 'DELIVERED'},
-      ),
+      await _client.patch('/orders/courier/$orderId/status', {
+        'status': 'DELIVERED',
+      }),
     );
   }
 

@@ -18,7 +18,7 @@ class OrderStatusTimerCard extends StatelessWidget {
 
     final phase = _resolvePhase(order);
     final deadline = _resolveDeadline(order);
-    final remaining = deadline == null ? null : deadline.difference(now);
+    final remaining = deadline?.difference(now);
     final isOverdue = remaining != null && remaining.inSeconds <= 0;
 
     return Container(
@@ -27,10 +27,7 @@ class OrderStatusTimerCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: isOverdue ? const Color(0xFFFFF7ED) : const Color(0xFFF4FBF1),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: isOverdue ? orange : green,
-          width: 1.8,
-        ),
+        border: Border.all(color: isOverdue ? orange : green, width: 1.8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,10 +186,7 @@ class _MetricBox extends StatelessWidget {
 }
 
 class _OrderPhase {
-  const _OrderPhase({
-    required this.title,
-    required this.subtitle,
-  });
+  const _OrderPhase({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;

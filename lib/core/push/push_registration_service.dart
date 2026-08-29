@@ -15,13 +15,13 @@ class PushRegistrationService {
     FirebaseMessaging? firebaseMessaging,
     DeviceInfoPlugin? deviceInfo,
     DeviceRegistrationService? deviceRegistrationService,
-  })  : _apiClient = apiClient ?? ApiClient(),
-        _firebaseMessaging = FirebaseBootstrap.isAvailable
-            ? firebaseMessaging ?? FirebaseMessaging.instance
-            : null,
-        _deviceInfo = deviceInfo ?? DeviceInfoPlugin(),
-        _deviceRegistrationService =
-            deviceRegistrationService ?? DeviceRegistrationService();
+  }) : _apiClient = apiClient ?? ApiClient(),
+       _firebaseMessaging = FirebaseBootstrap.isAvailable
+           ? firebaseMessaging ?? FirebaseMessaging.instance
+           : null,
+       _deviceInfo = deviceInfo ?? DeviceInfoPlugin(),
+       _deviceRegistrationService =
+           deviceRegistrationService ?? DeviceRegistrationService();
 
   final ApiClient _apiClient;
   final FirebaseMessaging? _firebaseMessaging;
@@ -214,23 +214,23 @@ class PushRegistrationService {
 
     _tokenRefreshSubscription?.cancel();
 
-    _tokenRefreshSubscription = firebaseMessaging.onTokenRefresh.listen(
-      (newToken) async {
-        final token = newToken.trim();
+    _tokenRefreshSubscription = firebaseMessaging.onTokenRefresh.listen((
+      newToken,
+    ) async {
+      final token = newToken.trim();
 
-        if (token.isEmpty) {
-          return;
-        }
+      if (token.isEmpty) {
+        return;
+      }
 
-        try {
-          await _deviceRegistrationService.registerDevice(pushToken: token);
-          await registerToken(token);
-        } catch (_) {
-          // Не валим приложение из-за refresh token registration.
-          // Следующий запуск/restore session снова попробует регистрацию.
-        }
-      },
-    );
+      try {
+        await _deviceRegistrationService.registerDevice(pushToken: token);
+        await registerToken(token);
+      } catch (_) {
+        // Не валим приложение из-за refresh token registration.
+        // Следующий запуск/restore session снова попробует регистрацию.
+      }
+    });
   }
 
   Future<DeviceDetails> _readDeviceDetails() async {
@@ -376,7 +376,8 @@ class PushRegistrationResult {
   }) {
     if (response is Map<String, dynamic>) {
       return PushRegistrationResult(
-        success: response['success'] == true ||
+        success:
+            response['success'] == true ||
             response['id'] != null ||
             response['token'] != null,
         permission: null,
@@ -390,7 +391,8 @@ class PushRegistrationResult {
       final mapped = Map<String, dynamic>.from(response);
 
       return PushRegistrationResult(
-        success: mapped['success'] == true ||
+        success:
+            mapped['success'] == true ||
             mapped['id'] != null ||
             mapped['token'] != null,
         permission: null,

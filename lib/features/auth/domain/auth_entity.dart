@@ -1,8 +1,5 @@
 class AuthSession {
-  const AuthSession({
-    required this.accessToken,
-    required this.refreshToken,
-  });
+  const AuthSession({required this.accessToken, required this.refreshToken});
 
   final String accessToken;
   final String refreshToken;
@@ -16,13 +13,8 @@ class CourierLoginResult {
     this.session,
   });
 
-  const CourierLoginResult.authenticated({
-    required AuthSession session,
-  }) : this._(
-         passwordChangeRequired: false,
-         phone: '',
-         session: session,
-       );
+  const CourierLoginResult.authenticated({required AuthSession session})
+    : this._(passwordChangeRequired: false, phone: '', session: session);
 
   const CourierLoginResult.passwordChangeRequired({
     required String phone,

@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_details.dart';
 
 class OrderItemsCard extends StatelessWidget {
-  const OrderItemsCard({
-    super.key,
-    required this.items,
-  });
+  const OrderItemsCard({super.key, required this.items});
 
   final List<CourierOrderLine> items;
 
@@ -45,10 +42,7 @@ class OrderItemsCard extends StatelessWidget {
               final item = entry.value;
 
               return Container(
-                padding: EdgeInsets.only(
-                  top: index == 0 ? 0 : 12,
-                  bottom: 12,
-                ),
+                padding: EdgeInsets.only(top: index == 0 ? 0 : 12, bottom: 12),
                 decoration: BoxDecoration(
                   border: Border(
                     bottom: BorderSide(

@@ -19,7 +19,8 @@ String? normalizeKazakhstanPhone(String input) {
 String formatKazakhstanPhoneInput(String input) {
   var digits = input.replaceAll(RegExp(r'\D'), '');
 
-  if (digits.length == 11 && (digits.startsWith('7') || digits.startsWith('8'))) {
+  if (digits.length == 11 &&
+      (digits.startsWith('7') || digits.startsWith('8'))) {
     digits = digits.substring(1);
   }
 

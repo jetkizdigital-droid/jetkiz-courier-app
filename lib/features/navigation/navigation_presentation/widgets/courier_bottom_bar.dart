@@ -27,12 +27,7 @@ class CourierBottomBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
         decoration: const BoxDecoration(
           color: barBackground,
-          border: Border(
-            top: BorderSide(
-              color: barBorderColor,
-              width: 1,
-            ),
-          ),
+          border: Border(top: BorderSide(color: barBorderColor, width: 1)),
           boxShadow: [
             BoxShadow(
               color: Color(0x12000000),

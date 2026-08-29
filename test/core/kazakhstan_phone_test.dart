@@ -8,10 +8,7 @@ void main() {
     });
 
     test('accepts pasted +7 number', () {
-      expect(
-        normalizeKazakhstanPhone('+7 (700) 123-45-67'),
-        '+77001234567',
-      );
+      expect(normalizeKazakhstanPhone('+7 (700) 123-45-67'), '+77001234567');
     });
 
     test('converts legacy 8 prefix', () {
@@ -24,9 +21,6 @@ void main() {
   });
 
   test('formatKazakhstanPhoneInput handles pasted country prefix', () {
-    expect(
-      formatKazakhstanPhoneInput('+7 700 123 45 67'),
-      '(700) 123-45-67',
-    );
+    expect(formatKazakhstanPhoneInput('+7 700 123 45 67'), '(700) 123-45-67');
   });
 }

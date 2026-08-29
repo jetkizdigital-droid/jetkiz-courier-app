@@ -5,7 +5,7 @@ import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
 import 'package:jetkiz_courier_app/core/storage/token_storage.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/login_page.dart';
-import 'package:jetkiz_courier_app/features/home/home_page.dart';
+import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
@@ -75,9 +75,9 @@ class _AuthGateState extends State<AuthGate> {
 
       if (!mounted) return;
 
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CourierShell()),
+      );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         AuthGate.onCourierAuthenticated?.call();

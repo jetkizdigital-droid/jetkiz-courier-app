@@ -11,10 +11,7 @@ import 'package:jetkiz_courier_app/features/orders/presentation/widgets/order_pa
 import 'package:jetkiz_courier_app/features/orders/presentation/widgets/order_status_timer_card.dart';
 
 class OrderDetailsPage extends StatefulWidget {
-  const OrderDetailsPage({
-    super.key,
-    required this.orderId,
-  });
+  const OrderDetailsPage({super.key, required this.orderId});
 
   final String orderId;
 
@@ -58,9 +55,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     super.dispose();
   }
 
-  Future<void> _load({
-    bool silent = false,
-  }) async {
+  Future<void> _load({bool silent = false}) async {
     if (silent) {
       if (mounted) {
         setState(() {
@@ -92,12 +87,12 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         _error = _humanizeOrderError(e);
       });
     } finally {
-      if (!mounted) return;
-
-      setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
+      }
     }
   }
 
@@ -112,10 +107,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     final normalized = raw.replaceAll(RegExp(r'\s+'), '');
     final uri = Uri.parse('tel:$normalized');
 
-    final ok = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
     if (!ok) {
       _showSnackBar('Не удалось открыть звонок');
@@ -184,8 +176,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       final message = updated.isDelivered
           ? 'Заказ доставлен'
           : updated.isOnTheWay
-              ? 'Заказ забран из ресторана'
-              : 'Статус заказа обновлён';
+          ? 'Заказ забран из ресторана'
+          : 'Статус заказа обновлён';
 
       _showSnackBar(message);
 
@@ -205,11 +197,11 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         await _load(silent: true);
       }
     } finally {
-      if (!mounted) return;
-
-      setState(() {
-        _isSubmitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
 
@@ -332,9 +324,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
   void _showSnackBar(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -378,9 +368,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error.isNotEmpty && _order == null) {
@@ -429,9 +417,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     final order = _order;
 
     if (order == null) {
-      return const Center(
-        child: Text('Заказ не найден'),
-      );
+      return const Center(child: Text('Заказ не найден'));
     }
 
     final income = _formatMoney(_resolveCourierIncome(order));
@@ -441,19 +427,14 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          OrderStatusTimerCard(
-            order: order,
-            now: _now,
-          ),
+          OrderStatusTimerCard(order: order, now: _now),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: const Color(0xFFF4FBF1),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: const Color(0xFFB7E3B1),
-              ),
+              border: Border.all(color: const Color(0xFFB7E3B1)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -521,11 +502,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
         decoration: const BoxDecoration(
           color: Colors.white,
-          border: Border(
-            top: BorderSide(
-              color: Color(0xFFE5E7EB),
-            ),
-          ),
+          border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
         ),
         child: SizedBox(
           height: 56,

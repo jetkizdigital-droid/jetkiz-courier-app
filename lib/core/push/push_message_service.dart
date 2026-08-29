@@ -324,7 +324,9 @@ class PushMessageService {
 
   void _emitOrderEvent(Map<String, dynamic> data) {
     CourierOrderEvents.emitFromPush(
-      data.map((key, value) => MapEntry(key.toString(), value?.toString() ?? '')),
+      data.map(
+        (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+      ),
     );
   }
 

@@ -4,6 +4,10 @@ import 'package:jetkiz_courier_app/features/finance/domain/courier_finance_model
 class CourierFinanceApi {
   const CourierFinanceApi(this._apiClient);
 
+  static const Duration _almatyUtcOffset = Duration(hours: 5);
+  static const int _ledgerPageSize = 100;
+  static const int _maxLedgerPages = 50;
+
   final ApiClient _apiClient;
 
   Future<CourierFinanceResponse> getFinance({
@@ -23,33 +27,15 @@ class CourierFinanceApi {
       'to': range.to.toUtc().toIso8601String(),
     };
 
-    final summaryPath = _buildPath(
-      '/couriers/me/finance/summary',
-      commonQuery,
-    );
-
-    final ledgerPath = _buildPath(
-      '/couriers/me/finance/ledger',
-      {
-        ...commonQuery,
-        'page': '1',
-        'limit': '200',
-      },
-    );
+    final summaryPath = _buildPath('/couriers/me/finance/summary', commonQuery);
 
     final results = await Future.wait<dynamic>([
       _apiClient.get(summaryPath),
-      _apiClient.get(ledgerPath),
+      _loadLedger(commonQuery),
     ]);
 
     final summaryJson = _asMap(results[0]);
-    final ledgerResponse = results[1];
-    final ledgerItems =
-        _extractList(ledgerResponse, const ['items']) ??
-        _extractList(ledgerResponse, const ['data', 'items']) ??
-        _extractList(ledgerResponse, const ['ledger']) ??
-        _extractList(ledgerResponse, const ['data', 'ledger']) ??
-        (ledgerResponse is List ? ledgerResponse : const []);
+    final ledgerItems = results[1] as List<dynamic>;
 
     return CourierFinanceResponse.fromParts(
       periodKey: resolvedPeriod,
@@ -58,29 +44,54 @@ class CourierFinanceApi {
     );
   }
 
+  Future<List<dynamic>> _loadLedger(Map<String, String> commonQuery) async {
+    final items = <dynamic>[];
+
+    for (var page = 1; page <= _maxLedgerPages; page++) {
+      final response = await _apiClient.get(
+        _buildPath('/couriers/me/finance/ledger', {
+          ...commonQuery,
+          'page': '$page',
+          'limit': '$_ledgerPageSize',
+        }),
+      );
+
+      final pageItems =
+          _extractList(response, const ['items']) ??
+          _extractList(response, const ['data', 'items']) ??
+          _extractList(response, const ['ledger']) ??
+          _extractList(response, const ['data', 'ledger']) ??
+          (response is List ? response : const []);
+
+      items.addAll(pageItems);
+
+      if (pageItems.length < _ledgerPageSize) break;
+    }
+
+    return items;
+  }
+
   _FinanceRange _resolveRange(
     String period, {
     String? startDate,
     String? endDate,
   }) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final endOfToday = today
-        .add(const Duration(days: 1))
-        .subtract(const Duration(milliseconds: 1));
+    final now = DateTime.now().toUtc().add(_almatyUtcOffset);
+    final today = DateTime.utc(now.year, now.month, now.day);
+    final endOfToday = _endOfAlmatyDayUtc(today);
 
     switch (period) {
       case 'today':
-        return _FinanceRange(today, endOfToday);
+        return _FinanceRange(_almatyDayStartUtc(today), endOfToday);
       case 'yesterday':
         final yesterday = today.subtract(const Duration(days: 1));
         return _FinanceRange(
-          yesterday,
-          today.subtract(const Duration(milliseconds: 1)),
+          _almatyDayStartUtc(yesterday),
+          _endOfAlmatyDayUtc(yesterday),
         );
       case '7d':
         return _FinanceRange(
-          today.subtract(const Duration(days: 6)),
+          _almatyDayStartUtc(today.subtract(const Duration(days: 6))),
           endOfToday,
         );
       case 'custom':
@@ -93,23 +104,42 @@ class CourierFinanceApi {
           );
         }
 
-        final normalizedStart = DateTime(start.year, start.month, start.day);
-        final normalizedEnd = DateTime(end.year, end.month, end.day)
-            .add(const Duration(days: 1))
-            .subtract(const Duration(milliseconds: 1));
+        final normalizedStart = DateTime.utc(
+          start.year,
+          start.month,
+          start.day,
+        );
+        final normalizedEnd = DateTime.utc(end.year, end.month, end.day);
 
         if (normalizedEnd.isBefore(normalizedStart)) {
           throw ArgumentError('endDate must not be before startDate');
         }
 
-        return _FinanceRange(normalizedStart, normalizedEnd);
+        return _FinanceRange(
+          _almatyDayStartUtc(normalizedStart),
+          _endOfAlmatyDayUtc(normalizedEnd),
+        );
       case '30d':
       default:
         return _FinanceRange(
-          today.subtract(const Duration(days: 29)),
+          _almatyDayStartUtc(today.subtract(const Duration(days: 29))),
           endOfToday,
         );
     }
+  }
+
+  DateTime _almatyDayStartUtc(DateTime almatyDate) {
+    return DateTime.utc(
+      almatyDate.year,
+      almatyDate.month,
+      almatyDate.day,
+    ).subtract(_almatyUtcOffset);
+  }
+
+  DateTime _endOfAlmatyDayUtc(DateTime almatyDate) {
+    return _almatyDayStartUtc(
+      almatyDate.add(const Duration(days: 1)),
+    ).subtract(const Duration(milliseconds: 1));
   }
 
   DateTime? _parseLocalDate(String? value) {

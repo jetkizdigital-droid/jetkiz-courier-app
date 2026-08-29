@@ -3,16 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/core/events/courier_order_events.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
-import 'package:jetkiz_courier_app/features/finance/presentation/finance_page.dart';
-import 'package:jetkiz_courier_app/features/home/home_page.dart';
-import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
 import 'package:jetkiz_courier_app/features/orders/data/courier_order_details_api.dart';
 import 'package:jetkiz_courier_app/features/orders/data/courier_orders_api.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_item.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/widgets/courier_order_compact_card.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/widgets/orders_period_filter.dart';
-import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
 
 class OrdersPage extends StatefulWidget {
   const OrdersPage({super.key});
@@ -100,8 +96,7 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
       final filtered = rows.where((order) {
         if (!_isTerminal(order)) return true;
         return _matchesRange(order, _range);
-      }).toList()
-        ..sort(_compareOrders);
+      }).toList()..sort(_compareOrders);
 
       if (!mounted) return;
       setState(() {
@@ -252,21 +247,6 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
     messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _onBottomBarTap(int index) {
-    if (index == 1) return;
-
-    final Widget page = switch (index) {
-      0 => const HomePage(),
-      2 => const FinancePage(),
-      3 => const ProfilePage(),
-      _ => const OrdersPage(),
-    };
-
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => page),
-    );
-  }
-
   String _humanizeError(Object error) {
     if (error is FormatException) {
       return 'Сервер вернул некорректные данные заказа. Обновите экран позже.';
@@ -297,29 +277,20 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
 
     return Scaffold(
       backgroundColor: bg,
-      bottomNavigationBar: CourierBottomBar(
-        currentIndex: 1,
-        onTap: _onBottomBarTap,
-      ),
       body: SafeArea(
         child: Column(
           children: [
             Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
               decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Color(0xFFE4E8EF)),
-                ),
+                border: Border(bottom: BorderSide(color: Color(0xFFE4E8EF))),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
                     'Заказы',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 12),
                   OrdersPeriodFilter(
@@ -340,7 +311,9 @@ class _OrdersPageState extends State<OrdersPage> with WidgetsBindingObserver {
                                 SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                                 SizedBox(width: 8),
                                 Text(

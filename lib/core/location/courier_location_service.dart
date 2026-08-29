@@ -9,8 +9,9 @@ class CourierLocationService {
 
   CourierLocationService._(this._apiClient);
 
-  static final CourierLocationService _instance =
-      CourierLocationService._(ApiClient());
+  static final CourierLocationService _instance = CourierLocationService._(
+    ApiClient(),
+  );
 
   final ApiClient _apiClient;
 
@@ -97,10 +98,7 @@ class CourierLocationService {
     String source = 'manual',
   }) async {
     try {
-      return await _sendPosition(
-        await getCurrentPosition(),
-        source: source,
-      );
+      return await _sendPosition(await getCurrentPosition(), source: source);
     } catch (e) {
       return CourierLocationSendResult(
         success: false,
@@ -126,19 +124,17 @@ class CourierLocationService {
     _isSending = true;
 
     try {
-      final response = await _apiClient.post(
-        '/couriers/me/location',
-        <String, dynamic>{
-          'lat': position.latitude,
-          'lng': position.longitude,
-          'accuracy': position.accuracy,
-          if (position.heading.isFinite && position.heading >= 0)
-            'heading': position.heading,
-          if (position.speed.isFinite && position.speed >= 0)
-            'speed': position.speed,
-          'capturedAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      );
+      final response = await _apiClient
+          .post('/couriers/me/location', <String, dynamic>{
+            'lat': position.latitude,
+            'lng': position.longitude,
+            'accuracy': position.accuracy,
+            if (position.heading.isFinite && position.heading >= 0)
+              'heading': position.heading,
+            if (position.speed.isFinite && position.speed >= 0)
+              'speed': position.speed,
+            'capturedAt': DateTime.now().toUtc().toIso8601String(),
+          });
 
       return CourierLocationSendResult(
         success: true,
@@ -195,18 +191,19 @@ class CourierLocationService {
 
     final firstSend = await sendCurrentLocation(source: 'online_start');
 
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: _buildTrackingSettings(interval),
-    ).listen(
-      (position) {
-        if (!_isTracking) return;
-        unawaited(_sendPosition(position, source: 'stream'));
-      },
-      onError: (_) {
-        // A transient GPS error must not tear down the courier shift.
-      },
-      cancelOnError: false,
-    );
+    _positionSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: _buildTrackingSettings(interval),
+        ).listen(
+          (position) {
+            if (!_isTracking) return;
+            unawaited(_sendPosition(position, source: 'stream'));
+          },
+          onError: (_) {
+            // A transient GPS error must not tear down the courier shift.
+          },
+          cancelOnError: false,
+        );
 
     return CourierLocationStartResult(
       started: true,

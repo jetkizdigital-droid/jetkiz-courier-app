@@ -1,3 +1,5 @@
+// ignore_for_file: file_names
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -45,7 +47,8 @@ class ApiClient {
     if (_isReleaseBuild) {
       final uri = Uri.tryParse(normalized);
       final host = (uri?.host ?? '').trim().toLowerCase();
-      final unsafeHost = host.isEmpty ||
+      final unsafeHost =
+          host.isEmpty ||
           host == 'localhost' ||
           host == '127.0.0.1' ||
           host == '0.0.0.0' ||
@@ -71,15 +74,10 @@ class ApiClient {
   }
 
   Future<dynamic> post(String path, [Map<String, dynamic>? body]) async {
-    return _handleResponse(
-      await _send(method: 'POST', path: path, body: body),
-    );
+    return _handleResponse(await _send(method: 'POST', path: path, body: body));
   }
 
-  Future<dynamic> postPublic(
-    String path, [
-    Map<String, dynamic>? body,
-  ]) async {
+  Future<dynamic> postPublic(String path, [Map<String, dynamic>? body]) async {
     return _handleResponse(
       await _sendPublic(method: 'POST', path: path, body: body),
     );
@@ -144,10 +142,8 @@ class ApiClient {
     if (response.statusCode != 401) return response;
 
     final latestAccessToken = await _tokenStorage.getAccessToken();
-    if (
-      staleTokenRetries > 0 &&
-      _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
-    ) {
+    if (staleTokenRetries > 0 &&
+        _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)) {
       // Another request already rotated the session and stored a newer access
       // token. Re-run this request with that token instead of refreshing again.
       return _send(
@@ -240,7 +236,9 @@ class ApiClient {
     try {
       switch (method) {
         case 'GET':
-          return await _client.get(uri, headers: resolvedHeaders).timeout(_timeout);
+          return await _client
+              .get(uri, headers: resolvedHeaders)
+              .timeout(_timeout);
         case 'POST':
           return await _client
               .post(
@@ -275,9 +273,17 @@ class ApiClient {
     } on TimeoutException {
       throw ApiException.timeout(method: method, path: path);
     } on SocketException catch (e) {
-      throw ApiException.network(method: method, path: path, message: e.message);
+      throw ApiException.network(
+        method: method,
+        path: path,
+        message: e.message,
+      );
     } on http.ClientException catch (e) {
-      throw ApiException.network(method: method, path: path, message: e.message);
+      throw ApiException.network(
+        method: method,
+        path: path,
+        message: e.message,
+      );
     } on ApiException {
       rethrow;
     } catch (e) {
@@ -315,10 +321,8 @@ class ApiClient {
       if (response.statusCode != 401) return response;
 
       final latestAccessToken = await _tokenStorage.getAccessToken();
-      if (
-        staleTokenRetries > 0 &&
-        _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
-      ) {
+      if (staleTokenRetries > 0 &&
+          _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)) {
         return await _sendMultipart(
           path: path,
           fieldName: fieldName,
@@ -383,9 +387,17 @@ class ApiClient {
     } on TimeoutException {
       throw ApiException.timeout(method: 'POST', path: path);
     } on SocketException catch (e) {
-      throw ApiException.network(method: 'POST', path: path, message: e.message);
+      throw ApiException.network(
+        method: 'POST',
+        path: path,
+        message: e.message,
+      );
     } on http.ClientException catch (e) {
-      throw ApiException.network(method: 'POST', path: path, message: e.message);
+      throw ApiException.network(
+        method: 'POST',
+        path: path,
+        message: e.message,
+      );
     } on ApiException {
       rethrow;
     } catch (e) {
@@ -679,13 +691,15 @@ class ApiException implements Exception {
     message: 'Network error: $message',
   );
 
-  factory ApiException.timeout({required String method, required String path}) =>
-      ApiException(
-        kind: ApiErrorKind.timeout,
-        method: method,
-        path: path,
-        message: 'Request timeout: $method $path',
-      );
+  factory ApiException.timeout({
+    required String method,
+    required String path,
+  }) => ApiException(
+    kind: ApiErrorKind.timeout,
+    method: method,
+    path: path,
+    message: 'Request timeout: $method $path',
+  );
 
   factory ApiException.server({
     required String method,

@@ -9,8 +9,8 @@ class DeviceRegistrationService {
   DeviceRegistrationService({
     ApiClient? apiClient,
     DeviceInfoPlugin? deviceInfo,
-  })  : _apiClient = apiClient ?? ApiClient(),
-        _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+  }) : _apiClient = apiClient ?? ApiClient(),
+       _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   final ApiClient _apiClient;
   final DeviceInfoPlugin _deviceInfo;
@@ -29,9 +29,7 @@ class DeviceRegistrationService {
   /// }
   ///
   /// Этот endpoint требует Authorization Bearer token.
-  Future<DeviceRegistrationResult> registerDevice({
-    String? pushToken,
-  }) async {
+  Future<DeviceRegistrationResult> registerDevice({String? pushToken}) async {
     final deviceId = await _apiClient.getDeviceId();
     final deviceDetails = await _readDeviceDetails();
     final appVersion = await _readAppVersion();
@@ -46,10 +44,7 @@ class DeviceRegistrationService {
         'pushToken': pushToken.trim(),
     };
 
-    final response = await _apiClient.post(
-      '/client-sessions/devices',
-      body,
-    );
+    final response = await _apiClient.post('/client-sessions/devices', body);
 
     return DeviceRegistrationResult.fromResponse(
       response,

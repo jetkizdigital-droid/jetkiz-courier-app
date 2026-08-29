@@ -35,9 +35,7 @@ class TwoGisLauncher {
     throw TwoGisLauncherException('Could not open maps app');
   }
 
-  static Future<void> openSearch({
-    required String query,
-  }) async {
+  static Future<void> openSearch({required String query}) async {
     final normalized = query.trim();
 
     if (normalized.isEmpty) {
@@ -72,17 +70,11 @@ class TwoGisLauncher {
       Uri.parse(
         'geo:$lat,$lng?q=$lat,$lng(${Uri.encodeComponent(normalizedLabel)})',
       ),
-      Uri.parse(
-        'https://2gis.kz/geo/$lng,$lat',
-      ),
-      Uri.https(
-        'www.google.com',
-        '/maps/search/',
-        {
-          'api': '1',
-          'query': '$lat,$lng',
-        },
-      ),
+      Uri.parse('https://2gis.kz/geo/$lng,$lat'),
+      Uri.https('www.google.com', '/maps/search/', {
+        'api': '1',
+        'query': '$lat,$lng',
+      }),
     ];
 
     for (final uri in candidates) {
@@ -101,44 +93,28 @@ class TwoGisLauncher {
   }
 
   static Uri _buildTwoGisSearchUri(String query) {
-    return Uri.parse(
-      'https://2gis.kz/search/${Uri.encodeComponent(query)}',
-    );
+    return Uri.parse('https://2gis.kz/search/${Uri.encodeComponent(query)}');
   }
 
   static Uri _buildGoogleMapsSearchUri(String query) {
-    return Uri.https(
-      'www.google.com',
-      '/maps/search/',
-      {
-        'api': '1',
-        'query': query,
-      },
-    );
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+    });
   }
 
-  static Uri _buildGoogleMapsDirectionsUri(
-    String origin,
-    String destination,
-  ) {
-    return Uri.https(
-      'www.google.com',
-      '/maps/dir/',
-      {
-        'api': '1',
-        'origin': origin,
-        'destination': destination,
-        'travelmode': 'driving',
-      },
-    );
+  static Uri _buildGoogleMapsDirectionsUri(String origin, String destination) {
+    return Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'origin': origin,
+      'destination': destination,
+      'travelmode': 'driving',
+    });
   }
 
   static Future<bool> _tryLaunch(Uri uri) async {
     try {
-      return await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
       return false;
     }

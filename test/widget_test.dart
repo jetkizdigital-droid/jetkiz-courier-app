@@ -6,9 +6,7 @@ void main() {
   testWidgets('courier login uses phone and password without OTP', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: LoginPage()),
-    );
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
 
     expect(find.text('Вход для курьера'), findsOneWidget);
     expect(find.text('Пароль'), findsOneWidget);

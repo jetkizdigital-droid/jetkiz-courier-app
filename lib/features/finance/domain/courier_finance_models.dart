@@ -17,9 +17,8 @@ class CourierFinanceResponse {
     final ledgerItems = ledgerJson
         .whereType<Map>()
         .map(
-          (e) => CourierFinanceLedgerItem.fromJson(
-            Map<String, dynamic>.from(e),
-          ),
+          (e) =>
+              CourierFinanceLedgerItem.fromJson(Map<String, dynamic>.from(e)),
         )
         .toList();
 
@@ -211,28 +210,21 @@ class CourierFinanceSummary {
       todayOrders: _readInt(
         json,
         const ['todayOrders'],
-        fallbackKeys: const [
-          'ordersToday',
-          'stats.todayOrders',
-        ],
+        fallbackKeys: const ['ordersToday', 'stats.todayOrders'],
       ),
       todayCompleted: _readInt(
         json,
         const ['todayCompleted'],
-        fallbackKeys: const [
-          'completedToday',
-          'stats.todayCompleted',
-        ],
+        fallbackKeys: const ['completedToday', 'stats.todayCompleted'],
       ),
       todayEarnings: _readInt(
         json,
         const ['todayEarnings'],
-        fallbackKeys: const [
-          'earningsToday',
-          'stats.todayEarnings',
-        ],
+        fallbackKeys: const ['earningsToday', 'stats.todayEarnings'],
       ),
-      grossAmount: grossAmount > 0 ? grossAmount : ledgerStats.grossOrderPayouts,
+      grossAmount: grossAmount > 0
+          ? grossAmount
+          : ledgerStats.grossOrderPayouts,
       commissionAmount: commissionAmount > 0
           ? commissionAmount
           : ledgerStats.commissionEstimate,
@@ -408,18 +400,10 @@ class CourierFinanceLedgerItem {
     return CourierFinanceLedgerItem(
       id: (json['id'] ?? '').toString(),
       type: (json['type'] ?? '').toString(),
-      amount: _readInt(
-        json,
-        const ['amount'],
-        fallbackKeys: const ['sum'],
-      ),
+      amount: _readInt(json, const ['amount'], fallbackKeys: const ['sum']),
       createdAt:
           _parseDateTime(
-            _readValue(
-              json,
-              const ['createdAt'],
-              fallbackKeys: const ['date'],
-            ),
+            _readValue(json, const ['createdAt'], fallbackKeys: const ['date']),
           ) ??
           DateTime.now(),
       orderId: _readNullableString(

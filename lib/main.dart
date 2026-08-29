@@ -9,9 +9,9 @@ import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_message_service.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
+import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 late final PushMessageService pushMessageService;
@@ -68,7 +68,9 @@ void _handleSessionExpired() {
   final navigator = appNavigatorKey.currentState;
 
   if (navigator == null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleSessionExpired());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleSessionExpired(),
+    );
     return;
   }
 
@@ -104,7 +106,9 @@ void _openPendingPushIfReady() {
   }
 
   if (intent.type == PushNavigationIntentType.ordersList) {
-    navigator.push(MaterialPageRoute(builder: (_) => const OrdersPage()));
+    navigator.push(
+      MaterialPageRoute(builder: (_) => const CourierShell(initialIndex: 1)),
+    );
     return;
   }
 

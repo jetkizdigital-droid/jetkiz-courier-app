@@ -1,3 +1,5 @@
+// ignore_for_file: use_null_aware_elements
+
 class CourierOrderItem {
   const CourierOrderItem({
     required this.id,
@@ -68,21 +70,27 @@ class CourierOrderItem {
   int? get courierNetAmount {
     if (courierFee != null) return courierFee;
     if (courierFeeGross != null && courierCommissionAmount != null) {
-      return (courierFeeGross! - courierCommissionAmount!).clamp(0, 1 << 31).toInt();
+      return (courierFeeGross! - courierCommissionAmount!)
+          .clamp(0, 1 << 31)
+          .toInt();
     }
     return courierFeeGross;
   }
 
   factory CourierOrderItem.fromJson(Map<String, dynamic> json) {
     final id = _requiredString(json, 'id');
-    final number = _requiredInt(json, const ['number', 'orderNumber'], 'number');
+    final number = _requiredInt(json, const [
+      'number',
+      'orderNumber',
+    ], 'number');
     final status = _requiredString(json, 'status').toUpperCase();
     final createdAt = _requiredDate(json, 'createdAt');
 
     final restaurant = _map(json['restaurant']);
     final user = _map(json['user']);
     final address = _map(json['address']);
-    final previewItems = _list(json['items']) ?? _list(json['orderItems']) ?? const [];
+    final previewItems =
+        _list(json['items']) ?? _list(json['orderItems']) ?? const [];
 
     return CourierOrderItem(
       id: id,
@@ -121,10 +129,12 @@ class CourierOrderItem {
         address?['comment'],
       ]),
       leaveAtDoor: _bool(json['leaveAtDoor']) || _bool(json['contactless']),
-      itemsCount: _nullableInt(json['itemsCount']) ??
+      itemsCount:
+          _nullableInt(json['itemsCount']) ??
           _nullableInt(json['totalItems']) ??
           _countItems(previewItems),
-      totalAmount: _nullableInt(json['total']) ??
+      totalAmount:
+          _nullableInt(json['total']) ??
           _nullableInt(json['amount']) ??
           _nullableInt(json['totalAmount']),
       courierFee: _nullableInt(json['courierFee']),
@@ -167,11 +177,10 @@ class CourierOrderItem {
   ) {
     final first = _firstNonEmpty([user?['firstName'], user?['name']]);
     final last = _firstNonEmpty([user?['lastName']]);
-    final joined = [first, last]
-        .whereType<String>()
-        .where((e) => e.isNotEmpty)
-        .join(' ')
-        .trim();
+    final joined = [
+      first,
+      last,
+    ].whereType<String>().where((e) => e.isNotEmpty).join(' ').trim();
     return joined.isNotEmpty ? joined : _firstNonEmpty([json['clientName']]);
   }
 

@@ -11,10 +11,7 @@ class AuthApi {
   }) async {
     final response = await _apiClient.postPublic(
       '/auth/courier/login-password',
-      {
-        'phone': phone.trim(),
-        'password': password,
-      },
+      {'phone': phone.trim(), 'password': password},
     );
 
     return _asMap(response, path: '/auth/courier/login-password');
@@ -25,14 +22,12 @@ class AuthApi {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final response = await _apiClient.postPublic(
-      '/auth/courier/change-password',
-      {
-        'phone': phone.trim(),
-        'currentPassword': currentPassword,
-        'newPassword': newPassword,
-      },
-    );
+    final response = await _apiClient
+        .postPublic('/auth/courier/change-password', {
+          'phone': phone.trim(),
+          'currentPassword': currentPassword,
+          'newPassword': newPassword,
+        });
 
     return _asMap(response, path: '/auth/courier/change-password');
   }

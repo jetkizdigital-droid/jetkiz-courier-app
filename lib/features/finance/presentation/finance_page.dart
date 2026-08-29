@@ -4,10 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/finance/data/courier_finance_api.dart';
 import 'package:jetkiz_courier_app/features/finance/domain/courier_finance_models.dart';
-import 'package:jetkiz_courier_app/features/home/home_page.dart';
-import 'package:jetkiz_courier_app/features/navigation/navigation_presentation/widgets/courier_bottom_bar.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/orders_page.dart';
-import 'package:jetkiz_courier_app/features/profile/presentation/profile_page.dart';
 
 enum FinancePeriod { today, yesterday, week, month, custom }
 
@@ -125,7 +121,8 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
         context: context,
         firstDate: DateTime(2024),
         lastDate: DateTime(now.year + 1, 12, 31),
-        initialDateRange: _customRange ??
+        initialDateRange:
+            _customRange ??
             DateTimeRange(
               start: now.subtract(const Duration(days: 6)),
               end: now,
@@ -152,21 +149,6 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
     await _load();
   }
 
-  void _onBottomBarTap(int index) {
-    if (index == 2) return;
-
-    final Widget page = switch (index) {
-      0 => const HomePage(),
-      1 => const OrdersPage(),
-      3 => const ProfilePage(),
-      _ => const FinancePage(),
-    };
-
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => page),
-    );
-  }
-
   String _humanizeError(Object error) {
     if (error is ApiException) {
       switch (error.kind) {
@@ -187,10 +169,6 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: CourierBottomBar(
-        currentIndex: 2,
-        onTap: _onBottomBarTap,
-      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -272,7 +250,10 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
               Row(
                 children: [
                   Expanded(
-                    child: _Metric(label: 'Начислено', value: _money(data.payoutAmount)),
+                    child: _Metric(
+                      label: 'Начислено',
+                      value: _money(data.payoutAmount),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -287,7 +268,10 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
               Row(
                 children: [
                   Expanded(
-                    child: _Metric(label: 'Выплачено', value: _money(data.paidAmount)),
+                    child: _Metric(
+                      label: 'Выплачено',
+                      value: _money(data.paidAmount),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -299,7 +283,10 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
                 ],
               ),
               const SizedBox(height: 18),
-              const Text('Расчёт', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const Text(
+                'Расчёт',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
               const SizedBox(height: 10),
               _Breakdown(
                 gross: data.grossIncome,
@@ -313,7 +300,10 @@ class _FinancePageState extends State<FinancePage> with WidgetsBindingObserver {
                   const Expanded(
                     child: Text(
                       'История операций',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   Text(
@@ -435,7 +425,10 @@ class _BalanceHero extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 5),
-          Text('за $period', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          Text(
+            'за $period',
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
         ],
       ),
     );
@@ -459,7 +452,10 @@ class _Metric extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF667085))),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF667085)),
+          ),
           const SizedBox(height: 5),
           Text(
             value,
@@ -510,8 +506,16 @@ class _Breakdown extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: const TextStyle(color: Color(0xFF667085)))),
-          Text(_money(value), style: const TextStyle(fontWeight: FontWeight.w800)),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Color(0xFF667085)),
+            ),
+          ),
+          Text(
+            _money(value),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
         ],
       ),
     );
@@ -538,11 +542,17 @@ class _LedgerRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_ledgerTitle(item), style: const TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  _ledgerTitle(item),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   _dateTime(item.createdAt),
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF667085)),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF667085),
+                  ),
                 ),
               ],
             ),
@@ -573,9 +583,13 @@ class _LedgerRow extends StatelessWidget {
       case 'DEDUCTION':
         return 'Удержание';
       case 'MANUAL_ADJUSTMENT':
-        return item.note?.trim().isNotEmpty == true ? item.note!.trim() : 'Корректировка';
+        return item.note?.trim().isNotEmpty == true
+            ? item.note!.trim()
+            : 'Корректировка';
       default:
-        return item.note?.trim().isNotEmpty == true ? item.note!.trim() : 'Операция';
+        return item.note?.trim().isNotEmpty == true
+            ? item.note!.trim()
+            : 'Операция';
     }
   }
 }
