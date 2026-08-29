@@ -26,7 +26,7 @@ class ApiClient {
   static const bool _isReleaseBuild = bool.fromEnvironment('dart.vm.product');
   static const Duration _timeout = Duration(seconds: 15);
   static const String _app = 'courier';
-  static const String _locale = 'ru';
+  static const String _localePreferenceKey = 'jetkiz.courier.language';
   static const String _timezone = 'Asia/Almaty';
   static const String _deviceIdKey = 'jetkiz_device_id';
 
@@ -461,6 +461,7 @@ class ApiClient {
         : null;
     final deviceId = await _getDeviceId();
     final appVersion = await _getAppVersion();
+    final locale = await _getLocaleLanguage();
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -470,7 +471,7 @@ class ApiClient {
       'X-Platform': _platform(),
       'X-App-Version': appVersion,
       'X-Device-Id': deviceId,
-      'X-Locale': _locale,
+      'X-Locale': locale,
       'X-Timezone': _timezone,
       'User-Agent': 'JetkizCourier/$appVersion',
     };
@@ -609,6 +610,11 @@ class ApiClient {
     return generated;
   }
 
+  Future<String> _getLocaleLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_localePreferenceKey) == 'kk' ? 'kk' : 'ru';
+  }
+
   Future<String> _getAppVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
@@ -666,10 +672,10 @@ class ApiException implements Exception {
   final String message;
   final int? statusCode;
 
+  // A valid authenticated user may legitimately receive 403 for an action
+  // that is not allowed. Only 401/sessionExpired may destroy local auth state.
   bool get isAuthenticationFailure =>
-      kind == ApiErrorKind.unauthorized ||
-      kind == ApiErrorKind.forbidden ||
-      kind == ApiErrorKind.sessionExpired;
+      kind == ApiErrorKind.unauthorized || kind == ApiErrorKind.sessionExpired;
 
   bool get isTransient =>
       kind == ApiErrorKind.network ||
