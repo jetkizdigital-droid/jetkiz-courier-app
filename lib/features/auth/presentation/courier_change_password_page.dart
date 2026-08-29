@@ -19,8 +19,7 @@ class CourierChangePasswordPage extends StatefulWidget {
       _CourierChangePasswordPageState();
 }
 
-class _CourierChangePasswordPageState
-    extends State<CourierChangePasswordPage> {
+class _CourierChangePasswordPageState extends State<CourierChangePasswordPage> {
   final TextEditingController _password = TextEditingController();
   final TextEditingController _repeat = TextEditingController();
   late final AuthController _controller;
@@ -162,9 +161,8 @@ class _CourierChangePasswordPageState
                         borderRadius: BorderRadius.circular(16),
                       ),
                       suffixIcon: IconButton(
-                        onPressed: () => setState(
-                          () => _obscureRepeat = !_obscureRepeat,
-                        ),
+                        onPressed: () =>
+                            setState(() => _obscureRepeat = !_obscureRepeat),
                         icon: Icon(
                           _obscureRepeat
                               ? Icons.visibility_outlined

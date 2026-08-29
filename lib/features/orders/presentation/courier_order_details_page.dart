@@ -9,10 +9,7 @@ import 'package:jetkiz_courier_app/features/orders/domain/courier_order_details.
 import 'package:url_launcher/url_launcher.dart';
 
 class CourierOrderDetailsPage extends StatefulWidget {
-  const CourierOrderDetailsPage({
-    super.key,
-    required this.orderId,
-  });
+  const CourierOrderDetailsPage({super.key, required this.orderId});
 
   final String orderId;
 
@@ -141,9 +138,7 @@ class _CourierOrderDetailsPageState extends State<CourierOrderDetailsPage>
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(
-              _locale.t(
-                pickup ? 'orders.checked' : 'orders.deliveredButton',
-              ),
+              _locale.t(pickup ? 'orders.checked' : 'orders.deliveredButton'),
             ),
           ),
         ],
@@ -225,10 +220,7 @@ class _CourierOrderDetailsPageState extends State<CourierOrderDetailsPage>
       body: _loading && order == null
           ? const Center(child: CircularProgressIndicator())
           : _errorKey != null && order == null
-          ? _ErrorState(
-              message: _locale.t(_errorKey!),
-              onRetry: () => _load(),
-            )
+          ? _ErrorState(message: _locale.t(_errorKey!), onRetry: () => _load())
           : order == null
           ? const SizedBox.shrink()
           : RefreshIndicator(
@@ -386,7 +378,10 @@ class _PartyCard extends StatelessWidget {
           ),
           if ((name ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text(name!.trim(), style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(
+              name!.trim(),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
           ],
           if ((address ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 6),

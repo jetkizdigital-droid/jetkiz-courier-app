@@ -95,9 +95,10 @@ class _CourierHomePageState extends State<CourierHomePage>
       final profile = _map(me['courierProfile']) ?? _map(me['profile']);
       final firstName = _firstText([me['firstName'], profile?['firstName']]);
       final lastName = _firstText([me['lastName'], profile?['lastName']]);
-      final fullName = [firstName, lastName]
-          .where((value) => value.isNotEmpty)
-          .join(' ');
+      final fullName = [
+        firstName,
+        lastName,
+      ].where((value) => value.isNotEmpty).join(' ');
       final online = _bool(me['isOnline']) || _bool(profile?['isOnline']);
       final metrics = results[3] as _TodayMetrics;
 
@@ -183,9 +184,7 @@ class _CourierHomePageState extends State<CourierHomePage>
     final id = _text(_activeOrder?['id']);
     if (id.isEmpty) return;
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CourierOrderDetailsPage(orderId: id),
-      ),
+      MaterialPageRoute(builder: (_) => CourierOrderDetailsPage(orderId: id)),
     );
     if (mounted) await _load(silent: true);
   }
@@ -267,7 +266,9 @@ class _CourierHomePageState extends State<CourierHomePage>
                                 );
                                 if (mounted) await _load(silent: true);
                               },
-                              icon: const Icon(Icons.notifications_none_rounded),
+                              icon: const Icon(
+                                Icons.notifications_none_rounded,
+                              ),
                             ),
                             if (_unread > 0)
                               Positioned(

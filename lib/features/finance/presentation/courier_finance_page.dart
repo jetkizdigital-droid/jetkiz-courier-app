@@ -156,7 +156,8 @@ class _CourierFinancePageState extends State<CourierFinancePage>
         context: context,
         firstDate: DateTime(2024),
         lastDate: DateTime(now.year + 1, 12, 31),
-        initialDateRange: _customRange ??
+        initialDateRange:
+            _customRange ??
             DateTimeRange(
               start: now.subtract(const Duration(days: 6)),
               end: now,
@@ -387,7 +388,10 @@ class _Metric extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+        ),
         const SizedBox(height: 4),
         Text(label, style: const TextStyle(color: Color(0xFF667085))),
       ],
@@ -418,15 +422,27 @@ class _LedgerTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(entry.type.isEmpty ? '—' : entry.type, style: const TextStyle(fontWeight: FontWeight.w700)),
-                if (dateText.isNotEmpty) Text(dateText, style: const TextStyle(color: Color(0xFF667085), fontSize: 12)),
+                Text(
+                  entry.type.isEmpty ? '—' : entry.type,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (dateText.isNotEmpty)
+                  Text(
+                    dateText,
+                    style: const TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 12,
+                    ),
+                  ),
               ],
             ),
           ),
           Text(
             '${positive ? '+' : '-'}${_money(entry.amount.abs())} ₸',
             style: TextStyle(
-              color: positive ? const Color(0xFF2F8731) : const Color(0xFFB42318),
+              color: positive
+                  ? const Color(0xFF2F8731)
+                  : const Color(0xFFB42318),
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -441,11 +457,13 @@ Map<String, dynamic> _asMap(dynamic value) {
   if (value is Map) return Map<String, dynamic>.from(value);
   return <String, dynamic>{};
 }
+
 int? _int(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.round();
   return int.tryParse(value?.toString() ?? '');
 }
+
 String _money(int value) {
   final raw = value.abs().toString();
   final out = StringBuffer();

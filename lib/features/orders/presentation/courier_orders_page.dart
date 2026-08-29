@@ -121,8 +121,8 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
   Future<CourierOrderItem?> _loadActive() async {
     final raw = _asMap(await _client.get('/orders/courier/active'));
     if (raw.isEmpty) return null;
-    final orderMap = _map(raw['activeOrder']) ??
-        (_text(raw['id']).isNotEmpty ? raw : null);
+    final orderMap =
+        _map(raw['activeOrder']) ?? (_text(raw['id']).isNotEmpty ? raw : null);
     if (orderMap == null) return null;
     if (_text(orderMap['fulfillmentType']).toUpperCase() == 'PICKUP') {
       return null;
@@ -182,7 +182,8 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
         context: context,
         firstDate: DateTime(2024),
         lastDate: DateTime(now.year + 1, 12, 31),
-        initialDateRange: _customRange ??
+        initialDateRange:
+            _customRange ??
             DateTimeRange(
               start: now.subtract(const Duration(days: 6)),
               end: now,
@@ -235,9 +236,7 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(
-              _locale.t(
-                pickup ? 'orders.checked' : 'orders.deliveredButton',
-              ),
+              _locale.t(pickup ? 'orders.checked' : 'orders.deliveredButton'),
             ),
           ),
         ],
@@ -249,9 +248,7 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
     try {
       if (pickup) {
         await _detailsApi.markPickedUp(order.id);
-        _show(
-          _locale.format('orders.pickedSuccess', {'number': order.number}),
-        );
+        _show(_locale.format('orders.pickedSuccess', {'number': order.number}));
       } else {
         await _detailsApi.markDelivered(order.id);
         _show(
@@ -571,7 +568,9 @@ class _StateView extends StatelessWidget {
     );
     return embedded
         ? Padding(padding: const EdgeInsets.all(24), child: child)
-        : Center(child: Padding(padding: const EdgeInsets.all(24), child: child));
+        : Center(
+            child: Padding(padding: const EdgeInsets.all(24), child: child),
+          );
   }
 }
 

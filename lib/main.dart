@@ -65,7 +65,9 @@ void _handleSessionExpired() {
 
   final navigator = appNavigatorKey.currentState;
   if (navigator == null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleSessionExpired());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleSessionExpired(),
+    );
     return;
   }
   if (_routingToAuthGate) return;

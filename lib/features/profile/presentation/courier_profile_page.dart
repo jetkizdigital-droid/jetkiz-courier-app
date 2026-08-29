@@ -207,7 +207,8 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
     setState(() => _loggingOut = true);
     try {
       final active = _asMap(await _client.get('/orders/courier/active'));
-      final order = _map(active['activeOrder']) ??
+      final order =
+          _map(active['activeOrder']) ??
           (_text(active['id']).isNotEmpty ? active : null);
       if (order != null &&
           _text(order['fulfillmentType']).toUpperCase() != 'PICKUP') {
@@ -419,7 +420,9 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.logout_rounded),
                         label: Text(
@@ -471,7 +474,9 @@ class _ProfileHeader extends StatelessWidget {
               CircleAvatar(
                 radius: 36,
                 backgroundColor: const Color(0xFFE5E7EB),
-                backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl!),
+                backgroundImage: avatarUrl == null
+                    ? null
+                    : NetworkImage(avatarUrl!),
                 child: avatarUrl == null
                     ? const Icon(Icons.person_rounded, size: 34)
                     : null,
@@ -509,7 +514,10 @@ class _ProfileHeader extends StatelessWidget {
                 name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const SizedBox(height: 7),
               Text(
@@ -546,16 +554,27 @@ class _Metric extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 3),
-        Text(label, style: const TextStyle(color: Color(0xFF667085), fontSize: 12)),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF667085), fontSize: 12),
+        ),
       ],
     ),
   );
 }
 
 class _SettingsTile extends StatelessWidget {
-  const _SettingsTile({required this.icon, required this.title, this.trailing, this.onTap});
+  const _SettingsTile({
+    required this.icon,
+    required this.title,
+    this.trailing,
+    this.onTap,
+  });
   final IconData icon;
   final String title;
   final Widget? trailing;
@@ -573,8 +592,16 @@ class _SettingsTile extends StatelessWidget {
           children: [
             Icon(icon, color: const Color(0xFF3FAE2A)),
             const SizedBox(width: 12),
-            Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700))),
-            if (trailing != null) trailing! else if (onTap != null) const Icon(Icons.chevron_right_rounded),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            if (trailing != null)
+              trailing!
+            else if (onTap != null)
+              const Icon(Icons.chevron_right_rounded),
           ],
         ),
       ),
@@ -587,11 +614,13 @@ Map<String, dynamic> _asMap(dynamic value) {
   if (value is Map) return Map<String, dynamic>.from(value);
   return <String, dynamic>{};
 }
+
 Map<String, dynamic>? _map(dynamic value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return Map<String, dynamic>.from(value);
   return null;
 }
+
 String _text(dynamic value) => value?.toString().trim() ?? '';
 String _firstText(List<dynamic> values) {
   for (final value in values) {
@@ -600,11 +629,13 @@ String _firstText(List<dynamic> values) {
   }
   return '';
 }
+
 int? _int(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.round();
   return int.tryParse(_text(value));
 }
+
 bool _bool(dynamic value) {
   if (value is bool) return value;
   if (value is num) return value != 0;

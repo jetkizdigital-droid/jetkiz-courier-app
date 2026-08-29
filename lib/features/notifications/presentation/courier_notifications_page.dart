@@ -183,10 +183,7 @@ class _CourierNotificationsPageState extends State<CourierNotificationsPage> {
                   children: [
                     const Icon(Icons.notifications_off_outlined, size: 46),
                     const SizedBox(height: 12),
-                    Text(
-                      _locale.t(_errorKey!),
-                      textAlign: TextAlign.center,
-                    ),
+                    Text(_locale.t(_errorKey!), textAlign: TextAlign.center),
                     const SizedBox(height: 14),
                     FilledButton(
                       onPressed: _load,
@@ -280,8 +277,9 @@ class _NotificationTile extends StatelessWidget {
                   children: [
                     Text(
                       title.isEmpty
-                          ? CourierLocaleController.instance
-                                .t('notifications.default')
+                          ? CourierLocaleController.instance.t(
+                              'notifications.default',
+                            )
                           : title,
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),

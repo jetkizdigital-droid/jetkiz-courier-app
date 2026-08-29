@@ -219,7 +219,9 @@ class _CourierLoginPageState extends State<CourierLoginPage> {
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
-                            autofillHints: const [AutofillHints.telephoneNumber],
+                            autofillHints: const [
+                              AutofillHints.telephoneNumber,
+                            ],
                             onChanged: _onPhoneChanged,
                             decoration: const InputDecoration(
                               hintText: '(700) 000-00-00',
