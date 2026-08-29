@@ -127,16 +127,38 @@ class ApiClient {
     required String path,
     Map<String, dynamic>? body,
     bool retryAfterRefresh = true,
+    int staleTokenRetries = 2,
   }) async {
+    final accessTokenUsed = await _tokenStorage.getAccessToken();
     final response = await _performJsonRequest(
       method: method,
       path: path,
       uri: Uri.parse('$baseUrl$path'),
-      headers: await _buildHeaders(includeAuth: true),
+      headers: await _buildHeaders(
+        includeAuth: true,
+        accessToken: accessTokenUsed,
+      ),
       body: body,
     );
 
     if (response.statusCode != 401) return response;
+
+    final latestAccessToken = await _tokenStorage.getAccessToken();
+    if (
+      staleTokenRetries > 0 &&
+      _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
+    ) {
+      // Another request refreshed the shared session while this request was in
+      // flight. Retry with the token already stored instead of rotating the
+      // refresh token a second time.
+      return _send(
+        method: method,
+        path: path,
+        body: body,
+        retryAfterRefresh: false,
+        staleTokenRetries: staleTokenRetries - 1,
+      );
+    }
 
     if (!retryAfterRefresh) {
       await _expireLocalSession(method: method, path: path);
@@ -150,6 +172,7 @@ class ApiClient {
         path: path,
         body: body,
         retryAfterRefresh: false,
+        staleTokenRetries: 2,
       );
     }
 
@@ -246,8 +269,13 @@ class ApiClient {
     required String fieldName,
     required String filePath,
     bool retryAfterRefresh = true,
+    int staleTokenRetries = 2,
   }) async {
-    final headers = await _buildHeaders(includeAuth: true);
+    final accessTokenUsed = await _tokenStorage.getAccessToken();
+    final headers = await _buildHeaders(
+      includeAuth: true,
+      accessToken: accessTokenUsed,
+    );
     headers.remove('Content-Type');
 
     try {
@@ -261,6 +289,20 @@ class ApiClient {
 
       if (response.statusCode != 401) return response;
 
+      final latestAccessToken = await _tokenStorage.getAccessToken();
+      if (
+        staleTokenRetries > 0 &&
+        _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
+      ) {
+        return _sendMultipart(
+          path: path,
+          fieldName: fieldName,
+          filePath: filePath,
+          retryAfterRefresh: false,
+          staleTokenRetries: staleTokenRetries - 1,
+        );
+      }
+
       if (!retryAfterRefresh) {
         await _expireLocalSession(method: 'POST', path: path);
       }
@@ -273,6 +315,7 @@ class ApiClient {
           fieldName: fieldName,
           filePath: filePath,
           retryAfterRefresh: false,
+          staleTokenRetries: 2,
         );
       }
 
@@ -312,9 +355,18 @@ class ApiClient {
     throw ApiException.sessionExpired(method: method, path: path);
   }
 
-  Future<Map<String, String>> _buildHeaders({required bool includeAuth}) async {
-    final accessToken = includeAuth
-        ? await _tokenStorage.getAccessToken()
+  bool _hasAccessTokenChanged(String? usedToken, String? latestToken) {
+    final used = usedToken?.trim() ?? '';
+    final latest = latestToken?.trim() ?? '';
+    return latest.isNotEmpty && latest != used;
+  }
+
+  Future<Map<String, String>> _buildHeaders({
+    required bool includeAuth,
+    String? accessToken,
+  }) async {
+    final resolvedAccessToken = includeAuth
+        ? accessToken ?? await _tokenStorage.getAccessToken()
         : null;
     final deviceId = await _getDeviceId();
     final appVersion = await _getAppVersion();
@@ -332,8 +384,8 @@ class ApiClient {
       'User-Agent': 'JetkizCourier/$appVersion',
     };
 
-    if (accessToken != null && accessToken.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $accessToken';
+    if (resolvedAccessToken != null && resolvedAccessToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $resolvedAccessToken';
     }
 
     return headers;
