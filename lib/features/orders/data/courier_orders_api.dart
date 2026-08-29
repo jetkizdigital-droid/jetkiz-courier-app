@@ -20,6 +20,8 @@ class CourierOrdersApi {
       page: page,
       limit: limit,
       status: status,
+      from: from,
+      to: to,
     );
   }
 
@@ -35,6 +37,8 @@ class CourierOrdersApi {
       page: page,
       limit: limit,
       status: status,
+      from: from,
+      to: to,
     );
   }
 
@@ -43,6 +47,8 @@ class CourierOrdersApi {
     required int page,
     required int limit,
     String? status,
+    String? from,
+    String? to,
   }) async {
     final requested = limit.clamp(1, 1000).toInt();
     final items = <CourierOrderItem>[];
@@ -56,7 +62,11 @@ class CourierOrdersApi {
       };
 
       final normalizedStatus = (status ?? '').trim();
+      final normalizedFrom = (from ?? '').trim();
+      final normalizedTo = (to ?? '').trim();
       if (normalizedStatus.isNotEmpty) query['status'] = normalizedStatus;
+      if (normalizedFrom.isNotEmpty) query['from'] = normalizedFrom;
+      if (normalizedTo.isNotEmpty) query['to'] = normalizedTo;
 
       final response = await _apiClient.get(_buildPath(endpoint, query));
       final pageItems = _parseOrderList(response);
@@ -71,7 +81,6 @@ class CourierOrdersApi {
 
   Future<CourierOrderItem?> getActiveOrder() async {
     final dynamic response = await _apiClient.get('/orders/courier/active');
-
     if (response == null) return null;
 
     final map = _asMap(response);
@@ -82,7 +91,6 @@ class CourierOrdersApi {
         _readMap(map, const ['item']) ??
         _readMap(map, const ['data']) ??
         map;
-
     if (wrapped.isEmpty || _isPickup(wrapped)) return null;
     return CourierOrderItem.fromJson(wrapped);
   }
@@ -103,14 +111,12 @@ class CourierOrdersApi {
         .toList(growable: false);
   }
 
-  bool _isPickup(Map<String, dynamic> item) {
-    return (item['fulfillmentType'] ?? '').toString().trim().toUpperCase() ==
-        'PICKUP';
-  }
+  bool _isPickup(Map<String, dynamic> item) =>
+      (item['fulfillmentType'] ?? '').toString().trim().toUpperCase() ==
+      'PICKUP';
 
-  String _buildPath(String basePath, Map<String, String> query) {
-    return Uri(path: basePath, queryParameters: query).toString();
-  }
+  String _buildPath(String basePath, Map<String, String> query) =>
+      Uri(path: basePath, queryParameters: query).toString();
 
   static Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
@@ -120,7 +126,6 @@ class CourierOrdersApi {
 
   static List<dynamic>? _extractList(dynamic json, List<String> path) {
     dynamic current = json;
-
     for (final part in path) {
       if (current is Map<String, dynamic> && current.containsKey(part)) {
         current = current[part];
@@ -130,7 +135,6 @@ class CourierOrdersApi {
         return null;
       }
     }
-
     return current is List ? current : null;
   }
 
@@ -139,7 +143,6 @@ class CourierOrdersApi {
     List<String> path,
   ) {
     dynamic current = json;
-
     for (final part in path) {
       if (current is Map<String, dynamic> && current.containsKey(part)) {
         current = current[part];
@@ -149,7 +152,6 @@ class CourierOrdersApi {
         return null;
       }
     }
-
     if (current is Map<String, dynamic>) return current;
     if (current is Map) return Map<String, dynamic>.from(current);
     return null;

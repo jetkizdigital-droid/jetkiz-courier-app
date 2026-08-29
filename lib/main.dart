@@ -5,13 +5,14 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:jetkiz_courier_app/core/firebase/firebase_bootstrap.dart';
+import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_message_service.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
 import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
-import 'package:jetkiz_courier_app/features/notifications/presentation/notifications_page.dart';
-import 'package:jetkiz_courier_app/features/orders/presentation/order_details_page.dart';
+import 'package:jetkiz_courier_app/features/notifications/presentation/courier_notifications_page.dart';
+import 'package:jetkiz_courier_app/features/orders/presentation/courier_order_details_page.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 late final PushMessageService pushMessageService;
@@ -22,9 +23,9 @@ bool _routingToAuthGate = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await CourierLocaleController.instance.load();
 
   var firebaseAvailable = false;
-
   try {
     await Firebase.initializeApp();
     firebaseAvailable = true;
@@ -33,16 +34,13 @@ Future<void> main() async {
   }
 
   FirebaseBootstrap.isAvailable = firebaseAvailable;
-
   if (firebaseAvailable) {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
   pushMessageService = PushMessageService(firebaseAvailable: firebaseAvailable);
-
   AuthGate.onAuthenticationStarted = _handleAuthenticationStarted;
   AuthGate.onCourierAuthenticated = _handleCourierAuthenticated;
-
   await pushMessageService.initialize(onIntent: _handlePushIntent);
   runApp(const MyApp());
 }
@@ -66,22 +64,16 @@ void _handleSessionExpired() {
   unawaited(CourierLocationService().stopTracking());
 
   final navigator = appNavigatorKey.currentState;
-
   if (navigator == null) {
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _handleSessionExpired(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handleSessionExpired());
     return;
   }
-
   if (_routingToAuthGate) return;
   _routingToAuthGate = true;
-
   navigator.pushAndRemoveUntil(
     MaterialPageRoute(builder: (_) => const AuthGate()),
-    (route) => false,
+    (_) => false,
   );
-
   WidgetsBinding.instance.addPostFrameCallback((_) {
     _routingToAuthGate = false;
   });
@@ -89,30 +81,29 @@ void _handleSessionExpired() {
 
 void _openPendingPushIfReady() {
   if (!_courierAuthenticated) return;
-
   final intent = _pendingPushIntent;
   final navigator = appNavigatorKey.currentState;
   if (intent == null || navigator == null) return;
 
   _pendingPushIntent = null;
-
   final orderId = intent.orderId?.trim();
-
   if (orderId != null && orderId.isNotEmpty) {
     navigator.push(
-      MaterialPageRoute(builder: (_) => OrderDetailsPage(orderId: orderId)),
+      MaterialPageRoute(
+        builder: (_) => CourierOrderDetailsPage(orderId: orderId),
+      ),
     );
     return;
   }
-
   if (intent.type == PushNavigationIntentType.ordersList) {
     navigator.push(
       MaterialPageRoute(builder: (_) => const CourierShell(initialIndex: 1)),
     );
     return;
   }
-
-  navigator.push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
+  navigator.push(
+    MaterialPageRoute(builder: (_) => const CourierNotificationsPage()),
+  );
 }
 
 class MyApp extends StatefulWidget {
@@ -125,16 +116,24 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   StreamSubscription<void>? _sessionExpiredSubscription;
 
+  CourierLocaleController get _locale => CourierLocaleController.instance;
+
   @override
   void initState() {
     super.initState();
+    _locale.addListener(_localeChanged);
     _sessionExpiredSubscription = ApiClient.sessionExpired.listen((_) {
       _handleSessionExpired();
     });
   }
 
+  void _localeChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _locale.removeListener(_localeChanged);
     unawaited(_sessionExpiredSubscription?.cancel());
     unawaited(pushMessageService.dispose());
     unawaited(CourierLocationService().shutdown());
@@ -144,12 +143,11 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     const green = Color(0xFF3FAE2A);
-
     return MaterialApp(
       navigatorKey: appNavigatorKey,
       debugShowCheckedModeBanner: false,
-      locale: const Locale('ru'),
-      supportedLocales: const [Locale('ru')],
+      locale: _locale.locale,
+      supportedLocales: const [Locale('ru'), Locale('kk')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

@@ -20,6 +20,24 @@ class CourierOrderEvents {
 
   static Stream<CourierOrderEvent> get stream => _controller.stream;
 
+  static void emit({
+    required String orderId,
+    required String type,
+    String? status,
+  }) {
+    final normalizedId = orderId.trim();
+    if (normalizedId.isEmpty) return;
+    _controller.add(
+      CourierOrderEvent(
+        orderId: normalizedId,
+        type: type.trim().isEmpty ? 'courier_order' : type.trim(),
+        status: status?.trim().isEmpty == true
+            ? null
+            : status?.trim().toUpperCase(),
+      ),
+    );
+  }
+
   static void emitFromPush(Map<String, String> data) {
     final orderId = (data['orderId'] ?? data['order_id'] ?? '').trim();
     if (orderId.isEmpty) return;
@@ -33,14 +51,10 @@ class CourierOrderEvents {
       return;
     }
 
-    _controller.add(
-      CourierOrderEvent(
-        orderId: orderId,
-        type: type.isEmpty ? 'courier_order' : type,
-        status: (data['status'] ?? '').trim().isEmpty
-            ? null
-            : data['status']!.trim().toUpperCase(),
-      ),
+    emit(
+      orderId: orderId,
+      type: type.isEmpty ? 'courier_order' : type,
+      status: data['status'],
     );
   }
 }

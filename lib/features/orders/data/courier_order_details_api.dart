@@ -1,3 +1,4 @@
+import 'package:jetkiz_courier_app/core/events/courier_order_events.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/features/orders/domain/courier_order_details.dart';
 
@@ -11,24 +12,35 @@ class CourierOrderDetailsApi {
   }
 
   Future<CourierOrderDetails> markPickedUp(String orderId) async {
-    return _parseDeliveryOrder(
+    final order = _parseDeliveryOrder(
       await _client.patch('/orders/courier/$orderId/status', {
         'status': 'ON_THE_WAY',
       }),
     );
+    CourierOrderEvents.emit(
+      orderId: order.id,
+      type: 'order_status',
+      status: order.status,
+    );
+    return order;
   }
 
   Future<CourierOrderDetails> markDelivered(String orderId) async {
-    return _parseDeliveryOrder(
+    final order = _parseDeliveryOrder(
       await _client.patch('/orders/courier/$orderId/status', {
         'status': 'DELIVERED',
       }),
     );
+    CourierOrderEvents.emit(
+      orderId: order.id,
+      type: 'order_status',
+      status: order.status,
+    );
+    return order;
   }
 
   CourierOrderDetails _parseDeliveryOrder(dynamic response) {
     final Map<String, dynamic> map;
-
     if (response is Map<String, dynamic>) {
       map = response;
     } else if (response is Map) {
@@ -38,13 +50,11 @@ class CourierOrderDetailsApi {
     }
 
     final order = CourierOrderDetails.fromJson(map);
-
     if (!order.isDelivery) {
       throw const FormatException(
         'Самовывоз не должен быть доступен курьерскому приложению',
       );
     }
-
     return order;
   }
 }
