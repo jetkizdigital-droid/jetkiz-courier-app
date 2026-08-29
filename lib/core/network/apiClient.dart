@@ -148,9 +148,8 @@ class ApiClient {
       staleTokenRetries > 0 &&
       _hasAccessTokenChanged(accessTokenUsed, latestAccessToken)
     ) {
-      // Another request refreshed the shared session while this request was in
-      // flight. Retry with the token already stored instead of rotating the
-      // refresh token a second time.
+      // Another request already rotated the session and stored a newer access
+      // token. Re-run this request with that token instead of refreshing again.
       return _send(
         method: method,
         path: path,
@@ -161,6 +160,32 @@ class ApiClient {
     }
 
     if (!retryAfterRefresh) {
+      final concurrentRefresh = await _awaitRefreshInFlight();
+      if (concurrentRefresh != null) {
+        if (concurrentRefresh.isSuccess) {
+          return _send(
+            method: method,
+            path: path,
+            body: body,
+            retryAfterRefresh: false,
+            staleTokenRetries: staleTokenRetries > 0
+                ? staleTokenRetries - 1
+                : 0,
+          );
+        }
+
+        if (concurrentRefresh.isInvalidSession) {
+          await _expireLocalSession(method: method, path: path);
+        }
+
+        throw concurrentRefresh.error ??
+            ApiException.server(
+              method: 'POST',
+              path: '/auth/refresh',
+              message: 'Token refresh failed temporarily',
+            );
+      }
+
       await _expireLocalSession(method: method, path: path);
     }
 
@@ -304,6 +329,32 @@ class ApiClient {
       }
 
       if (!retryAfterRefresh) {
+        final concurrentRefresh = await _awaitRefreshInFlight();
+        if (concurrentRefresh != null) {
+          if (concurrentRefresh.isSuccess) {
+            return await _sendMultipart(
+              path: path,
+              fieldName: fieldName,
+              filePath: filePath,
+              retryAfterRefresh: false,
+              staleTokenRetries: staleTokenRetries > 0
+                  ? staleTokenRetries - 1
+                  : 0,
+            );
+          }
+
+          if (concurrentRefresh.isInvalidSession) {
+            await _expireLocalSession(method: 'POST', path: path);
+          }
+
+          throw concurrentRefresh.error ??
+              ApiException.server(
+                method: 'POST',
+                path: '/auth/refresh',
+                message: 'Token refresh failed temporarily',
+              );
+        }
+
         await _expireLocalSession(method: 'POST', path: path);
       }
 
@@ -359,6 +410,12 @@ class ApiClient {
     final used = usedToken?.trim() ?? '';
     final latest = latestToken?.trim() ?? '';
     return latest.isNotEmpty && latest != used;
+  }
+
+  Future<_RefreshResult?> _awaitRefreshInFlight() async {
+    final existing = _refreshInFlight;
+    if (existing == null) return null;
+    return await existing;
   }
 
   Future<Map<String, String>> _buildHeaders({
