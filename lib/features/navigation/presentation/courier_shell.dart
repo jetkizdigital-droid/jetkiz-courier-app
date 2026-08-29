@@ -80,14 +80,13 @@ class _CourierShellState extends State<CourierShell>
 
   @override
   Widget build(BuildContext context) {
-    // Do not keep these as a const list. The shell listens to locale changes,
-    // and fresh widget instances make every preserved tab rebuild immediately
-    // while IndexedStack still keeps each tab's State alive.
+    // Fresh widget instances make every preserved tab rebuild when the locale
+    // controller notifies the shell. IndexedStack still keeps each tab State.
     final pages = <Widget>[
-      const CourierHomePage(),
-      const CourierOrdersPage(),
-      const CourierFinancePage(),
-      const CourierProfilePage(),
+      CourierHomePage(),
+      CourierOrdersPage(),
+      CourierFinancePage(),
+      CourierProfilePage(),
     ];
 
     return Scaffold(
