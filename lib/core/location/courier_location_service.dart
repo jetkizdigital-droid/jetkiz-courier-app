@@ -16,15 +16,19 @@ class CourierLocationService {
   final ApiClient _apiClient;
 
   StreamSubscription<Position>? _positionSubscription;
+  Timer? _heartbeatTimer;
   bool _isSending = false;
   bool _isTracking = false;
   Position? _queuedPosition;
 
-  static const Duration heartbeatInterval = Duration(seconds: 20);
+  static const Duration trackingInterval = Duration(seconds: 20);
+  static const Duration heartbeatInterval = Duration(seconds: 60);
 
   bool get isTracking => _isTracking;
 
-  Future<CourierLocationPermissionResult> ensurePermission() async {
+  Future<CourierLocationPermissionResult> ensurePermission({
+    bool requireBackground = false,
+  }) async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
     if (!serviceEnabled) {
@@ -58,6 +62,31 @@ class CourierLocationService {
       );
     }
 
+    if (requireBackground &&
+        _backgroundPermissionRequiredForPlatform &&
+        permission == LocationPermission.whileInUse) {
+      try {
+        permission = await Geolocator.requestPermission();
+      } catch (_) {
+        // Some Android versions require upgrading to "Always" from system
+        // settings. The explicit result below keeps the courier offline until
+        // background tracking is actually available.
+      }
+    }
+
+    if (requireBackground &&
+        _backgroundPermissionRequiredForPlatform &&
+        permission != LocationPermission.always) {
+      return CourierLocationPermissionResult(
+        allowed: false,
+        reason:
+            CourierLocationPermissionDeniedReason.backgroundPermissionRequired,
+        message:
+            'Для работы на линии в фоне разрешите геолокацию «Всегда» в настройках приложения.',
+        permission: permission.name,
+      );
+    }
+
     return CourierLocationPermissionResult(
       allowed: true,
       reason: null,
@@ -65,6 +94,10 @@ class CourierLocationService {
       permission: permission.name,
     );
   }
+
+  bool get _backgroundPermissionRequiredForPlatform =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   Future<Position> getCurrentPosition() async {
     final permission = await ensurePermission();
@@ -163,10 +196,10 @@ class CourierLocationService {
   }
 
   Future<CourierLocationStartResult> startTracking({
-    Duration interval = heartbeatInterval,
+    Duration interval = trackingInterval,
   }) async {
     if (_isTracking && _positionSubscription != null) {
-      final permission = await ensurePermission();
+      final permission = await ensurePermission(requireBackground: true);
       return CourierLocationStartResult(
         started: permission.allowed,
         message: permission.allowed
@@ -176,7 +209,7 @@ class CourierLocationService {
       );
     }
 
-    final permission = await ensurePermission();
+    final permission = await ensurePermission(requireBackground: true);
 
     if (!permission.allowed) {
       return CourierLocationStartResult(
@@ -201,9 +234,15 @@ class CourierLocationService {
           },
           onError: (_) {
             // A transient GPS error must not tear down the courier shift.
+            // The heartbeat keeps trying to refresh the location independently.
           },
           cancelOnError: false,
         );
+
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
+      if (!_isTracking) return;
+      unawaited(sendCurrentLocation(source: 'heartbeat'));
+    });
 
     return CourierLocationStartResult(
       started: true,
@@ -219,26 +258,40 @@ class CourierLocationService {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
+        distanceFilter: 5,
         intervalDuration: interval,
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'JETKIZ — вы на линии',
           notificationText:
               'Геопозиция используется для назначения и выполнения доставки.',
+          notificationChannelName: 'JETKIZ — геолокация курьера',
           enableWakeLock: true,
+          setOngoing: true,
         ),
+      );
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        activityType: ActivityType.automotiveNavigation,
+        distanceFilter: 5,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
       );
     }
 
     return const LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
+      distanceFilter: 5,
     );
   }
 
   Future<void> stopTracking() async {
     _isTracking = false;
     _queuedPosition = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     await _positionSubscription?.cancel();
     _positionSubscription = null;
   }
@@ -276,6 +329,7 @@ enum CourierLocationPermissionDeniedReason {
   serviceDisabled,
   permissionDenied,
   permissionDeniedForever,
+  backgroundPermissionRequired,
 }
 
 class CourierLocationStartResult {

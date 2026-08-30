@@ -11,6 +11,7 @@ on:
       - 'lib/**'
       - 'test/**'
       - 'android/**'
+      - 'ios/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/flutter-ci.yml'
