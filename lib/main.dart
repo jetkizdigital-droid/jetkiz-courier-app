@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:jetkiz_courier_app/core/firebase/firebase_bootstrap.dart';
@@ -28,9 +31,14 @@ Future<void> main() async {
   var firebaseAvailable = false;
   try {
     await Firebase.initializeApp();
+    await _configureCrashReporting();
     firebaseAvailable = true;
-  } catch (_) {
-    debugPrint('Firebase initialization failed; push is disabled.');
+  } catch (error, stackTrace) {
+    debugPrint('Firebase initialization failed; push/crash reporting is disabled.');
+    if (kDebugMode) {
+      debugPrint('$error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   FirebaseBootstrap.isAvailable = firebaseAvailable;
@@ -43,6 +51,23 @@ Future<void> main() async {
   AuthGate.onCourierAuthenticated = _handleCourierAuthenticated;
   await pushMessageService.initialize(onIntent: _handlePushIntent);
   runApp(const MyApp());
+}
+
+Future<void> _configureCrashReporting() async {
+  final crashlytics = FirebaseCrashlytics.instance;
+  await crashlytics.setCrashlyticsCollectionEnabled(kReleaseMode);
+
+  FlutterError.onError = (details) {
+    if (kDebugMode) {
+      FlutterError.presentError(details);
+    }
+    crashlytics.recordFlutterFatalError(details);
+  };
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    crashlytics.recordError(error, stack, fatal: true);
+    return true;
+  };
 }
 
 void _handlePushIntent(PushNavigationIntent intent) {
