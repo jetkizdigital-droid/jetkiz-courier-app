@@ -19,7 +19,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -48,3 +48,29 @@ jobs:
 
       - name: Build debug APK
         run: flutter build apk --debug
+
+      - name: Build release AAB with ephemeral CI signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            rm -f android/key.properties android/ci-release.jks
+          }
+          trap cleanup EXIT
+          keytool -genkeypair \
+            -keystore android/ci-release.jks \
+            -storepass ci-password \
+            -keypass ci-password \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 2 \
+            -alias ci \
+            -dname "CN=JETKIZ CI, OU=CI, O=JETKIZ, L=Shchuchinsk, ST=Akmola, C=KZ" \
+            >/dev/null 2>&1
+          cat > android/key.properties <<'EOF'
+          storePassword=ci-password
+          keyPassword=ci-password
+          keyAlias=ci
+          storeFile=../ci-release.jks
+          EOF
+          flutter build appbundle --release
