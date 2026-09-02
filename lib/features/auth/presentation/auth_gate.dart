@@ -73,8 +73,11 @@ class _AuthGateState extends State<AuthGate> {
         AuthGate.onCourierAuthenticated?.call();
       });
     } on ApiException catch (error) {
-      if (error.isAuthenticationFailure) {
-        await _tokenStorage.clear();
+      // Only ApiClient.sessionExpired is a definitive local-session revocation:
+      // it is emitted after the refresh endpoint itself rejected the current
+      // refresh token. A standalone 401 can be a request/rotation race and must
+      // never erase a valid courier session.
+      if (error.kind == ApiErrorKind.sessionExpired) {
         _openLogin();
         return;
       }
