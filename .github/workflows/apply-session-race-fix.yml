@@ -1,0 +1,64 @@
+name: Apply guarded session race fix
+
+on:
+  push:
+    branches:
+      - fix/session-refresh-race
+    paths:
+      - '.github/workflows/apply-session-race-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/session-refresh-race
+          fetch-depth: 0
+
+      - name: Patch ApiClient auth race handling
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('lib/core/network/apiClient.dart')
+          text = path.read_text()
+
+          old_json = """      await _expireLocalSession(method: method, path: path);\n    }\n\n    final refreshResult = await _refreshTokenOnce();"""
+          new_json = """      // A 401 from the protected endpoint after a successful refresh is not\n      // proof that the refresh session is invalid. Preserve local tokens; only\n      // /auth/refresh may definitively expire the local session.\n      throw ApiException.fromResponse(\n        method: method,\n        path: path,\n        response: response,\n      );\n    }\n\n    final refreshResult = await _refreshTokenOnce();"""
+          if text.count(old_json) != 1:
+              raise SystemExit(f'expected one JSON retry block, found {text.count(old_json)}')
+          text = text.replace(old_json, new_json, 1)
+
+          old_multipart = """        await _expireLocalSession(method: 'POST', path: path);\n      }\n\n      final refreshResult = await _refreshTokenOnce();"""
+          new_multipart = """        // Do not erase a valid session because one protected request still\n        // returned 401 after refresh. A definitive logout is decided only by\n        // the refresh endpoint.\n        throw ApiException.fromResponse(\n          method: 'POST',\n          path: path,\n          response: response,\n        );\n      }\n\n      final refreshResult = await _refreshTokenOnce();"""
+          if text.count(old_multipart) != 1:
+              raise SystemExit(f'expected one multipart retry block, found {text.count(old_multipart)}')
+          text = text.replace(old_multipart, new_multipart, 1)
+
+          old_invalid = """      if (response.statusCode == 400 ||\n          response.statusCode == 401 ||\n          response.statusCode == 403) {\n        return const _RefreshResult.invalidSession();\n      }"""
+          new_invalid = """      if (response.statusCode == 400 ||\n          response.statusCode == 401 ||\n          response.statusCode == 403) {\n        // A different request/isolate may already have rotated and persisted a\n        // newer refresh token while this request was in flight. Never clear\n        // that newer session because the stale refresh token was rejected.\n        for (final delay in <Duration>[\n          Duration.zero,\n          const Duration(milliseconds: 250),\n          const Duration(milliseconds: 750),\n        ]) {\n          if (delay != Duration.zero) {\n            await Future<void>.delayed(delay);\n          }\n          final latestRefreshToken = await _tokenStorage.getRefreshToken();\n          if (latestRefreshToken != null &&\n              latestRefreshToken.isNotEmpty &&\n              latestRefreshToken != refreshToken) {\n            return const _RefreshResult.success();\n          }\n        }\n        return const _RefreshResult.invalidSession();\n      }"""
+          if text.count(old_invalid) != 1:
+              raise SystemExit(f'expected one refresh-invalid block, found {text.count(old_invalid)}')
+          text = text.replace(old_invalid, new_invalid, 1)
+
+          path.write_text(text)
+          PY
+          dart format lib/core/network/apiClient.dart
+          git diff --check
+          git diff --exit-code -- lib/core/network/apiClient.dart && {
+            echo 'Patch produced no source changes'; exit 1;
+          } || true
+
+      - name: Commit source patch
+        shell: bash
+        run: |
+          git config user.name 'jetkizdigital-droid'
+          git config user.email 'jetkizdigital@gmail.com'
+          git add lib/core/network/apiClient.dart
+          git commit -m 'fix(auth): prevent refresh races from clearing courier session'
+          git push origin HEAD:fix/session-refresh-race
