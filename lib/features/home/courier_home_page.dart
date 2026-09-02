@@ -8,6 +8,7 @@ import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/time/almaty_date_range.dart';
 import 'package:jetkiz_courier_app/features/notifications/presentation/courier_notifications_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/courier_order_details_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CourierHomePage extends StatefulWidget {
   const CourierHomePage({super.key});
@@ -18,6 +19,9 @@ class CourierHomePage extends StatefulWidget {
 
 class _CourierHomePageState extends State<CourierHomePage>
     with WidgetsBindingObserver {
+  static const _backgroundLocationDisclosureKey =
+      'jetkiz.courier.background_location_disclosure.v1';
+
   late final ApiClient _client;
   late final _CourierHomeApi _api;
   final CourierLocationService _location = CourierLocationService();
@@ -114,8 +118,11 @@ class _CourierHomePageState extends State<CourierHomePage>
       });
 
       if (online && !_location.isTracking) {
-        final tracking = await _location.startTracking();
-        if (!tracking.started && mounted) _show(tracking.message);
+        final disclosed = await _ensureBackgroundLocationDisclosure();
+        if (disclosed) {
+          final tracking = await _location.startTracking();
+          if (!tracking.started && mounted) _show(tracking.message);
+        }
       }
       if (!online && _location.isTracking && _activeOrder == null) {
         await _location.stopTracking();
@@ -146,6 +153,9 @@ class _CourierHomePageState extends State<CourierHomePage>
     setState(() => _changingOnline = true);
     try {
       if (next) {
+        final disclosed = await _ensureBackgroundLocationDisclosure();
+        if (!disclosed) return;
+
         final permission = await _location.ensurePermission();
         if (!permission.allowed) {
           _show(permission.message);
@@ -178,6 +188,39 @@ class _CourierHomePageState extends State<CourierHomePage>
     } finally {
       if (mounted) setState(() => _changingOnline = false);
     }
+  }
+
+  Future<bool> _ensureBackgroundLocationDisclosure() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (preferences.getBool(_backgroundLocationDisclosureKey) == true) {
+      return true;
+    }
+    if (!mounted) return false;
+
+    final accepted = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(_locale.t('location.disclosureTitle')),
+            content: Text(_locale.t('location.disclosureBody')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(_locale.t('common.cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(_locale.t('location.disclosureContinue')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (accepted) {
+      await preferences.setBool(_backgroundLocationDisclosureKey, true);
+    }
+    return accepted;
   }
 
   Future<void> _openActiveOrder() async {
@@ -218,222 +261,418 @@ class _CourierHomePageState extends State<CourierHomePage>
 
     return Scaffold(
       body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: () => _load(silent: true),
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _locale.format('home.greeting', {
-                                  'name': displayName,
-                                }),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 25,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _locale.t('home.shift'),
-                                style: const TextStyle(
-                                  color: Color(0xFF667085),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            IconButton.filledTonal(
-                              onPressed: () async {
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const CourierNotificationsPage(),
-                                  ),
-                                );
-                                if (mounted) await _load(silent: true);
-                              },
-                              icon: const Icon(
-                                Icons.notifications_none_rounded,
-                              ),
-                            ),
-                            if (_unread > 0)
-                              Positioned(
-                                right: -4,
-                                top: -4,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFDC2626),
-                                    borderRadius: BorderRadius.circular(99),
-                                  ),
-                                  child: Text(
-                                    _unread > 99 ? '99+' : '$_unread',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    if (_errorKey != null) ...[
-                      const SizedBox(height: 14),
-                      _ErrorCard(message: _locale.t(_errorKey!)),
-                    ],
-                    if (_activeOrder != null) ...[
-                      const SizedBox(height: 18),
-                      _ActiveOrderCard(
-                        order: _activeOrder!,
-                        onOpen: _openActiveOrder,
-                      ),
-                    ],
-                    const SizedBox(height: 22),
-                    Text(
-                      _locale.t('home.today'),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _MetricCard(
-                            value: '$_orders',
-                            label: _locale.t('home.orders'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _MetricCard(
-                            value: '$_delivered',
-                            label: _locale.t('home.delivered'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _IncomeCard(amount: _earnings),
-                    const SizedBox(height: 22),
-                    _OnlineCard(
-                      isOnline: _isOnline,
-                      loading: _changingOnline,
-                      onTap: _toggleOnline,
-                    ),
-                    if (_refreshing) ...[
-                      const SizedBox(height: 18),
-                      const Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ],
-                  ],
+        child: RefreshIndicator(
+          onRefresh: () => _load(silent: true),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+            children: [
+              _Header(
+                name: displayName,
+                unread: _unread,
+                onNotifications: _openNotifications,
+              ),
+              const SizedBox(height: 18),
+              if (_loading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (_errorKey != null)
+                _ErrorCard(
+                  message: _locale.t(_errorKey!),
+                  onRetry: () => _load(),
+                )
+              else ...[
+                _ShiftCard(
+                  online: _isOnline,
+                  changing: _changingOnline,
+                  onToggle: _toggleOnline,
+                ),
+                const SizedBox(height: 14),
+                _MetricsRow(
+                  orders: _orders,
+                  delivered: _delivered,
+                  earnings: _earnings,
+                ),
+                const SizedBox(height: 14),
+                if (_activeOrder != null)
+                  _ActiveOrderCard(
+                    order: _activeOrder!,
+                    onOpen: _openActiveOrder,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const CourierNotificationsPage()),
+    );
+    if (mounted) await _load(silent: true);
+  }
+}
+
+class _Header extends StatelessWidget {
+  const _Header({
+    required this.name,
+    required this.unread,
+    required this.onNotifications,
+  });
+
+  final String name;
+  final int unread;
+  final VoidCallback onNotifications;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                locale.format('home.greeting', {'name': name}),
+                style: const TextStyle(
+                  fontSize: 25,
+                  height: 1.08,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.6,
                 ),
               ),
+              const SizedBox(height: 5),
+              Text(
+                locale.t('home.shift'),
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: locale.t('notifications.title'),
+          onPressed: onNotifications,
+          icon: Badge(
+            isLabelVisible: unread > 0,
+            label: Text(unread > 99 ? '99+' : '$unread'),
+            child: const Icon(Icons.notifications_none_rounded),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShiftCard extends StatelessWidget {
+  const _ShiftCard({
+    required this.online,
+    required this.changing,
+    required this.onToggle,
+  });
+
+  final bool online;
+  final bool changing;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
+    final color = online ? const Color(0xFF18B56B) : Colors.grey.shade700;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: online ? const Color(0xFFEAF9F1) : const Color(0xFFF4F5F7),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              online ? Icons.location_on_rounded : Icons.location_off_rounded,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  locale.t(online ? 'home.online' : 'home.offline'),
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  locale.t(online ? 'home.onlineHint' : 'home.offlineHint'),
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Switch.adaptive(
+            value: online,
+            onChanged: changing ? null : (_) => onToggle(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricsRow extends StatelessWidget {
+  const _MetricsRow({
+    required this.orders,
+    required this.delivered,
+    required this.earnings,
+  });
+
+  final int orders;
+  final int delivered;
+  final int earnings;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
+    return Row(
+      children: [
+        Expanded(
+          child: _MetricCard(
+            label: locale.t('home.orders'),
+            value: '$orders',
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            label: locale.t('home.delivered'),
+            value: '$delivered',
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _MetricCard(
+            label: locale.t('home.earned'),
+            value: '$earnings ₸',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8EAED)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 11,
+              height: 1.15,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActiveOrderCard extends StatelessWidget {
+  const _ActiveOrderCard({required this.order, required this.onOpen});
+
+  final Map<String, dynamic> order;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
+    final number = _text(order['orderNumber']).isNotEmpty
+        ? _text(order['orderNumber'])
+        : _text(order['id']).substring(0, 8);
+    final restaurant = _text(_map(order['restaurant'])?['name']);
+    final income = _int(order['courierIncome'] ?? order['courierPayout']);
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101714),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            locale.t('home.activeOrder'),
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            locale.format('home.orderNumber', {'number': number}),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (restaurant.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              restaurant,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+          ],
+          const SizedBox(height: 14),
+          Text(
+            locale.format('home.income', {'amount': income}),
+            style: const TextStyle(
+              color: Color(0xFF69E7A6),
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: onOpen,
+              child: Text(locale.t('home.openOrder')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorCard extends StatelessWidget {
+  const _ErrorCard({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = CourierLocaleController.instance;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3F2),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        children: [
+          Text(message, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          OutlinedButton(onPressed: onRetry, child: Text(locale.t('common.retry'))),
+        ],
       ),
     );
   }
 }
 
 class _CourierHomeApi {
-  const _CourierHomeApi(this.client);
+  _CourierHomeApi(this._client);
 
-  final ApiClient client;
+  final ApiClient _client;
 
-  Future<Map<String, dynamic>> getMe() async =>
-      _asMap(await client.get('/couriers/me'));
+  Future<Map<String, dynamic>> getMe() async {
+    return _map(await _client.get('/auth/me')) ?? <String, dynamic>{};
+  }
 
   Future<Map<String, dynamic>?> getActiveOrder() async {
-    final raw = _asMap(await client.get('/orders/courier/active'));
-    if (raw.isEmpty) return null;
-    final active = _map(raw['activeOrder']);
-    final order = active ?? (_text(raw['id']).isNotEmpty ? raw : null);
-    if (order == null) return null;
-    if (_text(order['fulfillmentType']).toUpperCase() == 'PICKUP') return null;
-    return order;
+    try {
+      final raw = await _client.get('/orders/courier/current');
+      return _map(raw);
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
   }
 
   Future<int> getUnreadCount() async {
-    final raw = _asMap(await client.get('/notifications/unread-count'));
-    return _int(raw['count']) ?? _int(raw['unreadCount']) ?? 0;
-  }
-
-  Future<void> setOnline(bool value) async {
-    await client.post('/couriers/me/online-status', {'isOnline': value});
+    final raw = await _client.get('/notifications/unread-count');
+    if (raw is num) return raw.toInt();
+    final map = _map(raw);
+    return _int(map?['count'] ?? map?['unreadCount']);
   }
 
   Future<_TodayMetrics> getTodayMetrics() async {
-    final range = AlmatyDateRange.today();
-    final query = range.toQuery();
-    final allPath = _path('/orders/courier/my', {
-      ...query,
-      'page': '1',
-      'limit': '100',
-    });
-    final deliveredPath = _path('/orders/courier/history', {
-      ...query,
-      'status': 'DELIVERED',
-      'page': '1',
-      'limit': '100',
-    });
-    final financePath = _path('/couriers/me/finance/summary', query);
-
-    final results = await Future.wait<dynamic>([
-      client.get(allPath),
-      client.get(deliveredPath),
-      client.get(financePath),
-    ]);
-
-    final all = _asMap(results[0]);
-    final delivered = _asMap(results[1]);
-    final finance = _asMap(results[2]);
-
-    return _TodayMetrics(
-      orders: _resultCount(all, results[0]),
-      delivered: _resultCount(delivered, results[1]),
-      earnings:
-          _int(finance['accruedPayoutAmount']) ??
-          _int(_map(finance['stats'])?['accruedPayoutAmount']) ??
-          0,
-    );
+    final range = buildAlmatyDayRange(DateTime.now());
+    try {
+      final raw = await _client.get(
+        '/couriers/me/stats?from=${range.fromUtc.toIso8601String()}&to=${range.toExclusiveUtc.toIso8601String()}',
+      );
+      final map = _map(raw) ?? <String, dynamic>{};
+      return _TodayMetrics(
+        orders: _int(map['ordersCount'] ?? map['totalOrders']),
+        delivered: _int(map['deliveredCount'] ?? map['deliveredOrders']),
+        earnings: _int(map['earnings'] ?? map['totalEarnings']),
+      );
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) {
+        return const _TodayMetrics(orders: 0, delivered: 0, earnings: 0);
+      }
+      rethrow;
+    }
   }
 
-  static int _resultCount(Map<String, dynamic> map, dynamic raw) {
-    final total = _int(map['total']);
-    if (total != null) return total;
-    final items = map['items'];
-    if (items is List) return items.length;
-    if (raw is List) return raw.length;
-    return 0;
+  Future<void> setOnline(bool online) async {
+    await _client.patch('/couriers/me/status', {'isOnline': online});
   }
-
-  static String _path(String base, Map<String, String> query) =>
-      Uri(path: base, queryParameters: query).toString();
 }
 
 class _TodayMetrics {
@@ -446,264 +685,6 @@ class _TodayMetrics {
   final int orders;
   final int delivered;
   final int earnings;
-}
-
-class _ActiveOrderCard extends StatelessWidget {
-  const _ActiveOrderCard({required this.order, required this.onOpen});
-
-  final Map<String, dynamic> order;
-  final VoidCallback onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final locale = CourierLocaleController.instance;
-    final number = _text(order['number']);
-    final restaurant = _firstText([
-      _map(order['restaurant'])?['nameRu'],
-      _map(order['restaurant'])?['name'],
-      order['restaurantName'],
-    ]);
-    final address = _firstText([
-      order['clientAddress'],
-      order['deliveryAddress'],
-      order['deliveryAddressText'],
-    ]);
-    final status = _text(order['status']).toUpperCase();
-    final income =
-        _int(order['courierFee']) ??
-        ((_int(order['courierFeeGross']) ?? 0) -
-                (_int(order['courierCommissionAmount']) ?? 0))
-            .clamp(0, 1 << 31)
-            .toInt();
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFDDE3EA)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  number.isEmpty
-                      ? locale.t('home.activeOrder')
-                      : locale.format('home.orderNumber', {'number': number}),
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Text(
-                locale.t('status.$status'),
-                style: const TextStyle(
-                  color: Color(0xFF175CD3),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          if (restaurant.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              restaurant,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ],
-          if (address.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(address, style: const TextStyle(color: Color(0xFF667085))),
-          ],
-          const SizedBox(height: 12),
-          Text(
-            locale.format('home.income', {'amount': _money(income)}),
-            style: const TextStyle(
-              color: Color(0xFF2F8731),
-              fontWeight: FontWeight.w800,
-              fontSize: 17,
-            ),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: FilledButton(
-              onPressed: onOpen,
-              child: Text(locale.t('home.openOrder')),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.value, required this.label});
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE4E8EF)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 3),
-          Text(label, style: const TextStyle(color: Color(0xFF667085))),
-        ],
-      ),
-    );
-  }
-}
-
-class _IncomeCard extends StatelessWidget {
-  const _IncomeCard({required this.amount});
-  final int amount;
-
-  @override
-  Widget build(BuildContext context) {
-    final locale = CourierLocaleController.instance;
-    return Container(
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F9EE),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFC8E8C1)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              locale.t('home.earned'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-          Text(
-            '${_money(amount)} ₸',
-            style: const TextStyle(
-              color: Color(0xFF2F8731),
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OnlineCard extends StatelessWidget {
-  const _OnlineCard({
-    required this.isOnline,
-    required this.loading,
-    required this.onTap,
-  });
-  final bool isOnline;
-  final bool loading;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final locale = CourierLocaleController.instance;
-    final background = isOnline ? const Color(0xFF2F8731) : Colors.white;
-    final foreground = isOnline ? Colors.white : const Color(0xFF344054);
-
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: loading ? null : onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.all(17),
-          child: Row(
-            children: [
-              if (loading)
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: foreground,
-                  ),
-                )
-              else
-                Icon(
-                  isOnline
-                      ? Icons.location_on_rounded
-                      : Icons.location_off_outlined,
-                  color: foreground,
-                ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      locale.t(isOnline ? 'home.online' : 'home.offline'),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: foreground,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      locale.t(
-                        isOnline ? 'home.onlineHint' : 'home.offlineHint',
-                      ),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: foreground.withValues(alpha: 0.75),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF5F5),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFF1C4C4)),
-    ),
-    child: Text(message),
-  );
-}
-
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map<String, dynamic>) return value;
-  if (value is Map) return Map<String, dynamic>.from(value);
-  return <String, dynamic>{};
 }
 
 Map<String, dynamic>? _map(dynamic value) {
@@ -722,26 +703,14 @@ String _firstText(List<dynamic> values) {
   return '';
 }
 
-int? _int(dynamic value) {
+int _int(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.round();
-  return int.tryParse(_text(value));
+  return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 bool _bool(dynamic value) {
   if (value is bool) return value;
-  if (value is num) return value != 0;
-  final text = _text(value).toLowerCase();
+  final text = value?.toString().toLowerCase();
   return text == 'true' || text == '1';
-}
-
-String _money(int value) {
-  final negative = value < 0;
-  final raw = value.abs().toString();
-  final out = StringBuffer();
-  for (var i = 0; i < raw.length; i++) {
-    if (i > 0 && (raw.length - i) % 3 == 0) out.write(' ');
-    out.write(raw[i]);
-  }
-  return '${negative ? '-' : ''}$out';
 }
