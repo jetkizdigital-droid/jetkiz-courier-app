@@ -197,12 +197,21 @@ class _CourierHomePageState extends State<CourierHomePage>
     }
     if (!mounted) return false;
 
+    final isKazakh = _locale.isKazakh;
+    final title = isKazakh
+        ? 'Фондық геолокация'
+        : 'Геолокация в фоновом режиме';
+    final body = isKazakh
+        ? 'JETKIZ Курьер қолданбасы курьердің орналасқан жерін диспетчерге көрсету және тапсырыстарды тағайындау мен жеткізуді қамтамасыз ету үшін, қолданба жабық немесе пайдаланылмаған кезде де, орналасқан жер деректерін жинайды.'
+        : 'JETKIZ Курьер собирает данные о местоположении, чтобы показывать диспетчеру положение курьера и обеспечивать назначение и выполнение доставок, даже когда приложение закрыто или не используется.';
+    final continueLabel = isKazakh ? 'Жалғастыру' : 'Продолжить';
+
     final accepted = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) => AlertDialog(
-            title: Text(_locale.t('location.disclosureTitle')),
-            content: Text(_locale.t('location.disclosureBody')),
+            title: Text(title),
+            content: Text(body),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -210,7 +219,7 @@ class _CourierHomePageState extends State<CourierHomePage>
               ),
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: Text(_locale.t('location.disclosureContinue')),
+                child: Text(continueLabel),
               ),
             ],
           ),
@@ -536,9 +545,11 @@ class _ActiveOrderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final locale = CourierLocaleController.instance;
-    final number = _text(order['orderNumber']).isNotEmpty
-        ? _text(order['orderNumber'])
-        : _text(order['id']).substring(0, 8);
+    final id = _text(order['id']);
+    final orderNumber = _text(order['orderNumber']);
+    final number = orderNumber.isNotEmpty
+        ? orderNumber
+        : (id.length >= 8 ? id.substring(0, 8) : id);
     final restaurant = _text(_map(order['restaurant'])?['name']);
     final income = _int(order['courierIncome'] ?? order['courierPayout']);
 
