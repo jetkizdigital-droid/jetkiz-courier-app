@@ -183,7 +183,14 @@ class ApiClient {
             );
       }
 
-      await _expireLocalSession(method: method, path: path);
+      // A 401 from the protected endpoint after a successful refresh is not
+      // proof that the refresh session is invalid. Preserve local tokens; only
+      // /auth/refresh may definitively expire the local session.
+      throw ApiException.fromResponse(
+        method: method,
+        path: path,
+        response: response,
+      );
     }
 
     final refreshResult = await _refreshTokenOnce();
@@ -366,7 +373,14 @@ class ApiClient {
               );
         }
 
-        await _expireLocalSession(method: 'POST', path: path);
+        // Do not erase a valid session because one protected request still
+        // returned 401 after refresh. A definitive logout is decided only by
+        // the refresh endpoint.
+        throw ApiException.fromResponse(
+          method: 'POST',
+          path: path,
+          response: response,
+        );
       }
 
       final refreshResult = await _refreshTokenOnce();
@@ -517,6 +531,24 @@ class ApiClient {
       if (response.statusCode == 400 ||
           response.statusCode == 401 ||
           response.statusCode == 403) {
+        // A different request/isolate may already have rotated and persisted a
+        // newer refresh token while this request was in flight. Never clear
+        // that newer session because the stale refresh token was rejected.
+        for (final delay in <Duration>[
+          Duration.zero,
+          const Duration(milliseconds: 250),
+          const Duration(milliseconds: 750),
+        ]) {
+          if (delay != Duration.zero) {
+            await Future<void>.delayed(delay);
+          }
+          final latestRefreshToken = await _tokenStorage.getRefreshToken();
+          if (latestRefreshToken != null &&
+              latestRefreshToken.isNotEmpty &&
+              latestRefreshToken != refreshToken) {
+            return const _RefreshResult.success();
+          }
+        }
         return const _RefreshResult.invalidSession();
       }
 
