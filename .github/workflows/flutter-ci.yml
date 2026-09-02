@@ -74,3 +74,40 @@ jobs:
           storeFile=../ci-release.jks
           EOF
           flutter build appbundle --release
+      - name: Verify 16 KB native library alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          aab=build/app/outputs/bundle/release/app-release.aab
+          test -f "$aab"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          unzip -qq "$aab" 'base/lib/*/*.so' -d "$tmp"
+          python3 - "$tmp" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          libraries = sorted(root.glob('base/lib/*/*.so'))
+          if not libraries:
+              raise SystemExit('No native libraries found in release AAB')
+
+          bad = []
+          for library in libraries:
+              output = subprocess.check_output(['readelf', '-lW', str(library)], text=True)
+              load_alignments = []
+              for line in output.splitlines():
+                  fields = line.split()
+                  if fields and fields[0] == 'LOAD':
+                      load_alignments.append(int(fields[-1], 0))
+              if not load_alignments or min(load_alignments) < 16384:
+                  bad.append((str(library), load_alignments))
+
+          if bad:
+              for library, alignments in bad:
+                  print(f'16KB alignment failure: {library}: {alignments}')
+              raise SystemExit(1)
+
+          print(f'16KB alignment verified for {len(libraries)} native libraries')
+          PY
