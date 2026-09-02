@@ -48,7 +48,6 @@ jobs:
 
           path.write_text(text)
           PY
-          dart format lib/core/network/apiClient.dart
           git diff --check
           git diff --exit-code -- lib/core/network/apiClient.dart && {
             echo 'Patch produced no source changes'; exit 1;
