@@ -4,7 +4,7 @@ Flutter application for JETKIZ couriers.
 
 ## Google Play review notes
 
-The courier uses location only while the courier is online. Before Android runtime location permission is requested, the app shows an in-app prominent disclosure explaining that precise location may be processed and sent to JETKIZ while the app is in the background or the screen is off. Tracking stops when the courier goes offline.
+The courier uses location only while the courier is online. The app already uses Android's system location permission flow. In addition, before the first runtime location permission request, the app shows an in-app prominent disclosure explaining that precise location may be processed and sent to JETKIZ while the app is in the background or the screen is off. Tracking stops when the courier goes offline.
 
 Play Console review setup must include:
 
