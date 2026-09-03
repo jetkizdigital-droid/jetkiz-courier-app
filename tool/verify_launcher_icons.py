@@ -19,7 +19,7 @@ EXPECTED = {
     "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png": (96, "12e927189ed1bfe369a85b312df0ba9ef158dc68009e1c238c54003ea709a48f"),
     "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png": (144, "2287209ef49d47bde2e898e5afefe0e5156a91e19e309d1b820c93cf28e1cdad"),
     "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png": (192, "56a4d47ac3b9094781d55deab76816fc5db000dc265c64b35e1ccdf132975423"),
-    "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png": (432, "c34d2db62d16ad8e6f568d793469a4be2c81e86be01b92897311510e4384b433"),
+    "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png": (432, "c5d127115a4104db65fd6fe4a0e2e4a84f29c9c9cfe8cd67b69470c5c80ddc88"),
 }
 
 
