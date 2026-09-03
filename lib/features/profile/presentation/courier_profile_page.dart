@@ -178,19 +178,32 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
     setState(() => _savingSettings = true);
     final push = PushRegistrationService(apiClient: _client);
     try {
-      await _client.patch('/client-settings/me', {'pushEnabled': value});
       if (value) {
-        final token = await push.getToken();
-        if (token != null && token.isNotEmpty) {
-          await push.registerToken(token);
+        // Turning the switch on must establish a real usable push channel,
+        // not only flip the backend preference. This requests Android/iOS
+        // notification permission, obtains FCM token and registers it first.
+        final registration = await push.initializeAndRegister();
+        final permissionGranted = registration.permission?.isGranted == true;
+
+        if (!permissionGranted || !registration.success) {
+          _show(
+            _locale.isKazakh
+                ? 'Хабарландыруға рұқсат берілмеді. Телефон баптауларында JETKIZ хабарландыруларын қосып, қайта көріңіз.'
+                : 'Не удалось включить уведомления. Разрешите уведомления JETKIZ в настройках телефона и попробуйте ещё раз.',
+          );
+          return;
         }
+
+        await _client.patch('/client-settings/me', {'pushEnabled': true});
       } else {
+        await _client.patch('/client-settings/me', {'pushEnabled': false});
         try {
           await push.unregisterCurrentToken();
         } catch (_) {
           // pushEnabled=false is already enforced by backend.
         }
       }
+
       if (!mounted) return;
       setState(() => _pushEnabled = value);
     } on ApiException catch (error) {
