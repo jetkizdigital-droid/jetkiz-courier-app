@@ -1,16 +1,27 @@
-# jetkiz_courier_app
+# JETKIZ Courier
 
-A new Flutter project.
+Flutter application for JETKIZ couriers.
 
-## Getting Started
+## Google Play review notes
 
-This project is a starting point for a Flutter application.
+The courier uses location only while the courier is online. Before Android runtime location permission is requested, the app shows an in-app prominent disclosure explaining that precise location may be processed and sent to JETKIZ while the app is in the background or the screen is off. Tracking stops when the courier goes offline.
 
-A few resources to get you started if this is your first Flutter project:
+Play Console review setup must include:
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- App access: a permanent reviewer courier login/password that does not require one-time codes.
+- Location permissions declaration: background location is used to assign and execute active deliveries while the courier is online.
+- Foreground service declaration: Location service is used for courier tracking while online.
+- Data safety: declare precise location, account/profile data, device/app identifiers used by the app, push token/device registration, and uploaded profile photo where applicable.
+- Privacy policy: https://jetkiz.asia/privacy
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Reviewer flow for the location declaration video:
+
+1. Sign in with the reviewer courier account.
+2. Open Home.
+3. Tap the button to go online.
+4. Show the JETKIZ background-location disclosure.
+5. Tap Continue.
+6. Grant Android location permissions, including background/Always when prompted or through system settings.
+7. Show the persistent JETKIZ location notification while the courier is online.
+8. Put the app in the background and return to it.
+9. Go offline and show that location tracking stops.
