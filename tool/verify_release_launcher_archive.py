@@ -22,7 +22,7 @@ if not launcher:
 required_suffixes = (
     "/ic_launcher.png",
     "/ic_launcher_round.png",
-    "/ic_launcher_foreground.png",
+    "/ic_launcher_foreground.xml",
     "/ic_launcher.xml",
     "/ic_launcher_round.xml",
 )
