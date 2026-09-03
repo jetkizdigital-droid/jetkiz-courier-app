@@ -77,7 +77,7 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Verify installed-app metadata and APK launcher resources
+      - name: Verify Play metadata, API level, permissions and launcher resources
         shell: bash
         run: |
           set -euo pipefail
@@ -86,10 +86,15 @@ jobs:
           test -n "$AAPT"
           test -x "$AAPT"
           "$AAPT" dump badging "$APK" > /tmp/courier-badging.txt
+          "$AAPT" dump permissions "$APK" > /tmp/courier-permissions.txt
           grep -F "package: name='asia.jetkiz.courier'" /tmp/courier-badging.txt
-          grep -Eq "versionCode='([2-9]|[1-9][0-9]+)'" /tmp/courier-badging.txt
+          grep -Eq "versionCode='([3-9]|[1-9][0-9]+)'" /tmp/courier-badging.txt
+          grep -F "targetSdkVersion:'36'" /tmp/courier-badging.txt
           grep -F "application-label:'JETKIZ Курьер'" /tmp/courier-badging.txt
           grep -E "application-icon-[0-9]+:'.*ic_launcher\.png'" /tmp/courier-badging.txt
+          grep -F "android.permission.ACCESS_FINE_LOCATION" /tmp/courier-permissions.txt
+          grep -F "android.permission.ACCESS_BACKGROUND_LOCATION" /tmp/courier-permissions.txt
+          grep -F "android.permission.FOREGROUND_SERVICE_LOCATION" /tmp/courier-permissions.txt
           python3 tool/verify_release_launcher_archive.py "$APK"
 
       - name: Build release AAB
