@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart' as permissions;
 
 import '../device/device_registration_service.dart';
 import '../firebase/firebase_bootstrap.dart';
@@ -46,6 +47,7 @@ class PushRegistrationService {
         permission: null,
         token: null,
         message: 'Firebase is not available',
+        failureStage: PushRegistrationFailureStage.firebase,
         raw: null,
       );
     }
@@ -60,6 +62,7 @@ class PushRegistrationService {
         permission: permission,
         token: null,
         message: 'Notification permission is not granted',
+        failureStage: PushRegistrationFailureStage.permission,
         raw: null,
       );
     }
@@ -73,6 +76,7 @@ class PushRegistrationService {
         permission: permission,
         token: null,
         message: 'FCM token is empty',
+        failureStage: PushRegistrationFailureStage.token,
         raw: null,
       );
     }
@@ -89,7 +93,18 @@ class PushRegistrationService {
     }
 
     try {
-      final result = await registerToken(token);
+      var result = await registerToken(token);
+      if (!result.success) {
+        final verified = await _verifyBackendRegistration();
+        if (verified) {
+          result = result.copyWith(
+            success: true,
+            message: 'Push token registration verified',
+            failureStage: PushRegistrationFailureStage.none,
+          );
+        }
+      }
+
       if (result.success) {
         _log('backend push token registration succeeded ${_maskToken(token)}');
         _listenTokenRefresh();
@@ -99,17 +114,39 @@ class PushRegistrationService {
       return result.copyWith(permission: permission);
     } catch (error) {
       _log('backend push token registration failed: ${_safeError(error)}');
+
+      // A network response can be lost after the server committed the token.
+      // Verify the current device once before reporting registration failure.
+      try {
+        if (await _verifyBackendRegistration()) {
+          _log('backend push token registration recovered by verification');
+          _listenTokenRefresh();
+          return PushRegistrationResult(
+            success: true,
+            permission: permission,
+            token: token,
+            message: 'Push token registration verified',
+            failureStage: PushRegistrationFailureStage.none,
+            raw: null,
+          );
+        }
+      } catch (_) {}
+
       return PushRegistrationResult(
         success: false,
         permission: permission,
         token: token,
         message: 'Push token registration failed',
+        failureStage: PushRegistrationFailureStage.backend,
         raw: null,
       );
     }
   }
 
   /// Reads the current OS/Firebase notification permission without prompting.
+  /// On Android the OS permission is the final authority. This avoids a stale
+  /// Firebase authorization snapshot incorrectly reporting notifications as
+  /// denied while Android Settings already shows them as allowed.
   Future<PushPermissionResult> checkPermission() async {
     final firebaseMessaging = _firebaseMessaging;
     if (firebaseMessaging == null) {
@@ -123,7 +160,26 @@ class PushRegistrationService {
 
     try {
       final settings = await firebaseMessaging.getNotificationSettings();
-      return PushPermissionResult.fromSettings(settings);
+      final firebaseResult = PushPermissionResult.fromSettings(settings);
+
+      if (!Platform.isAndroid) return firebaseResult;
+
+      final nativeStatus = await permissions.Permission.notification.status;
+      if (nativeStatus.isGranted || nativeStatus.isLimited) {
+        return firebaseResult.copyWith(
+          authorizationStatus: 'authorized',
+          nativeStatus: nativeStatus.name,
+        );
+      }
+
+      if (nativeStatus.isDenied || nativeStatus.isPermanentlyDenied) {
+        return firebaseResult.copyWith(
+          authorizationStatus: 'denied',
+          nativeStatus: nativeStatus.name,
+        );
+      }
+
+      return firebaseResult.copyWith(nativeStatus: nativeStatus.name);
     } catch (error) {
       return PushPermissionResult(
         authorizationStatus: 'error',
@@ -145,8 +201,8 @@ class PushRegistrationService {
     return requestPermission();
   }
 
-  /// Explicit permission request. The caller should normally use
-  /// [ensurePermission] so a decided permission is not prompted again.
+  /// Explicit permission request. Android uses the native notification
+  /// permission first, then refreshes Firebase's view of that permission.
   Future<PushPermissionResult> requestPermission() async {
     final firebaseMessaging = _firebaseMessaging;
     if (firebaseMessaging == null) {
@@ -159,6 +215,27 @@ class PushRegistrationService {
     }
 
     try {
+      if (Platform.isAndroid) {
+        final nativeStatus = await permissions.Permission.notification.request();
+        _log('native notification permission=${nativeStatus.name}');
+
+        // Refresh Firebase Messaging state as well. On Android this call is
+        // harmless after the native permission dialog has been resolved.
+        try {
+          await firebaseMessaging.requestPermission(
+            alert: true,
+            announcement: false,
+            badge: true,
+            carPlay: false,
+            criticalAlert: false,
+            provisional: false,
+            sound: true,
+          );
+        } catch (_) {}
+
+        return checkPermission();
+      }
+
       final settings = await firebaseMessaging.requestPermission(
         alert: true,
         announcement: false,
@@ -217,6 +294,7 @@ class PushRegistrationService {
         permission: null,
         token: null,
         message: 'FCM token is empty',
+        failureStage: PushRegistrationFailureStage.token,
         raw: null,
       );
     }
@@ -226,6 +304,7 @@ class PushRegistrationService {
     final appVersion = await _readAppVersion();
 
     final response = await _apiClient.post('/notification-devices/register', {
+      'app': 'courier',
       'token': normalizedToken,
       'platform': deviceDetails.platform,
       'deviceId': deviceId,
@@ -238,6 +317,22 @@ class PushRegistrationService {
       response,
       token: normalizedToken,
     );
+  }
+
+  Future<bool> _verifyBackendRegistration() async {
+    final deviceId = await _apiClient.getDeviceId();
+    final response = await _apiClient.get('/notification-devices');
+    final envelope = _asMap(response);
+    final items = envelope['items'];
+    if (items is! List) return false;
+
+    for (final item in items) {
+      final mapped = _asMap(item);
+      if (mapped['deviceId']?.toString() == deviceId && mapped['isActive'] == true) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Backend contract: POST /notification-devices/unregister
@@ -352,6 +447,12 @@ class PushRegistrationService {
     _tokenRefreshSubscription = null;
   }
 
+  static Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
   static String _maskToken(String token) {
     if (token.length <= 12) return '***';
     return '${token.substring(0, 6)}...${token.substring(token.length - 6)}';
@@ -373,6 +474,7 @@ class PushPermissionResult {
     required this.alert,
     required this.badge,
     required this.sound,
+    this.nativeStatus,
     this.error,
   });
 
@@ -389,6 +491,7 @@ class PushPermissionResult {
   final String alert;
   final String badge;
   final String sound;
+  final String? nativeStatus;
   final String? error;
 
   bool get isGranted =>
@@ -397,15 +500,42 @@ class PushPermissionResult {
 
   bool get isNotDetermined => authorizationStatus == 'notDetermined';
 
+  PushPermissionResult copyWith({
+    String? authorizationStatus,
+    String? alert,
+    String? badge,
+    String? sound,
+    String? nativeStatus,
+    String? error,
+  }) {
+    return PushPermissionResult(
+      authorizationStatus: authorizationStatus ?? this.authorizationStatus,
+      alert: alert ?? this.alert,
+      badge: badge ?? this.badge,
+      sound: sound ?? this.sound,
+      nativeStatus: nativeStatus ?? this.nativeStatus,
+      error: error ?? this.error,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'authorizationStatus': authorizationStatus,
       'alert': alert,
       'badge': badge,
       'sound': sound,
+      if (nativeStatus != null) 'nativeStatus': nativeStatus,
       if (error != null) 'error': error,
     };
   }
+}
+
+enum PushRegistrationFailureStage {
+  none,
+  firebase,
+  permission,
+  token,
+  backend,
 }
 
 class PushRegistrationResult {
@@ -415,6 +545,7 @@ class PushRegistrationResult {
     required this.token,
     required this.message,
     required this.raw,
+    this.failureStage = PushRegistrationFailureStage.none,
   });
 
   final bool success;
@@ -422,6 +553,7 @@ class PushRegistrationResult {
   final String? token;
   final String? message;
   final dynamic raw;
+  final PushRegistrationFailureStage failureStage;
 
   PushRegistrationResult copyWith({
     bool? success,
@@ -429,6 +561,7 @@ class PushRegistrationResult {
     String? token,
     String? message,
     dynamic raw,
+    PushRegistrationFailureStage? failureStage,
   }) {
     return PushRegistrationResult(
       success: success ?? this.success,
@@ -436,6 +569,7 @@ class PushRegistrationResult {
       token: token ?? this.token,
       message: message ?? this.message,
       raw: raw ?? this.raw,
+      failureStage: failureStage ?? this.failureStage,
     );
   }
 
@@ -450,14 +584,19 @@ class PushRegistrationResult {
         : null;
 
     if (mapped != null) {
+      final success =
+          mapped['success'] == true ||
+          mapped['id'] != null ||
+          mapped['token'] != null ||
+          mapped['deviceToken'] is Map;
       return PushRegistrationResult(
-        success:
-            mapped['success'] == true ||
-            mapped['id'] != null ||
-            mapped['token'] != null,
+        success: success,
         permission: null,
         token: mapped['token']?.toString() ?? token,
         message: mapped['message']?.toString(),
+        failureStage: success
+            ? PushRegistrationFailureStage.none
+            : PushRegistrationFailureStage.backend,
         raw: mapped,
       );
     }
@@ -467,6 +606,7 @@ class PushRegistrationResult {
       permission: null,
       token: token,
       message: null,
+      failureStage: PushRegistrationFailureStage.backend,
       raw: response,
     );
   }
