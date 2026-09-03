@@ -8,6 +8,11 @@ class CourierLocaleController extends ChangeNotifier {
 
   static final CourierLocaleController instance = CourierLocaleController._();
   static const _preferenceKey = 'jetkiz.courier.language';
+  static const Map<String, String> _legacyKeyAliases = {
+    'home.earnings': 'home.earned',
+    'home.onlineDescription': 'home.onlineHint',
+    'home.offlineDescription': 'home.offlineHint',
+  };
 
   Locale _locale = const Locale('ru');
   bool _localSelectionDirty = false;
@@ -60,8 +65,9 @@ class CourierLocaleController extends ChangeNotifier {
   }
 
   String t(String key) {
+    final resolvedKey = _legacyKeyAliases[key] ?? key;
     final table = isKazakh ? _kk : _ru;
-    return table[key] ?? _ru[key] ?? key;
+    return table[resolvedKey] ?? _ru[resolvedKey] ?? key;
   }
 
   String format(String key, Map<String, Object?> values) {
