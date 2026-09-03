@@ -145,9 +145,8 @@ class PushMessageService {
 
   static const String defaultChannelId = defaultPushChannelId;
   static const String pendingIntentKey = 'courier_pending_notification_intent';
-  static const String courierOrdersChannelId =
-      ::courierOrdersChannelId;
-  static const String courierOrdersSound = ::courierOrdersSound;
+  static const String courierOrdersChannelId = 'courier_orders_v2';
+  static const String courierOrdersSound = 'courier_order';
 
   final FirebaseMessaging? _firebaseMessaging;
   final FlutterLocalNotificationsPlugin _localNotifications;
