@@ -10,6 +10,8 @@ on:
     paths:
       - 'lib/**'
       - 'test/**'
+      - 'tool/verify_launcher_icons.py'
+      - 'tool/verify_release_launcher_archive.py'
       - 'android/**'
       - 'ios/**'
       - 'pubspec.yaml'
@@ -19,7 +21,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -37,6 +39,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Verify branded launcher sources
+        run: python3 tool/verify_launcher_icons.py
+
       - name: Format sources
         run: dart format --output=none lib test
 
@@ -48,3 +53,52 @@ jobs:
 
       - name: Build debug APK
         run: flutter build apk --debug
+
+      - name: Prepare ephemeral CI release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/courier-ci-upload.jks" \
+            -storepass ci-not-for-production \
+            -keypass ci-not-for-production \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -alias courier-ci \
+            -dname "CN=JETKIZ Courier CI,O=JETKIZ,C=KZ"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/courier-ci-upload.jks
+          storePassword=ci-not-for-production
+          keyAlias=courier-ci
+          keyPassword=ci-not-for-production
+          EOF
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Verify installed-app metadata and APK launcher resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          AAPT="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
+          test -n "$AAPT"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" > /tmp/courier-badging.txt
+          grep -F "package: name='asia.jetkiz.courier'" /tmp/courier-badging.txt
+          grep -Eq "versionCode='([2-9]|[1-9][0-9]+)'" /tmp/courier-badging.txt
+          grep -F "application-label:'JETKIZ Курьер'" /tmp/courier-badging.txt
+          grep -E "application-icon-[0-9]+:'.*ic_launcher\.png'" /tmp/courier-badging.txt
+          python3 tool/verify_release_launcher_archive.py "$APK"
+
+      - name: Build release AAB
+        run: flutter build appbundle --release
+
+      - name: Verify AAB launcher resources
+        run: python3 tool/verify_release_launcher_archive.py build/app/outputs/bundle/release/app-release.aab
+
+      - name: Remove ephemeral signing material
+        if: always()
+        shell: bash
+        run: rm -f android/key.properties "$RUNNER_TEMP/courier-ci-upload.jks"
