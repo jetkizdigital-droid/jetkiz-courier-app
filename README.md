@@ -25,3 +25,15 @@ Reviewer flow for the location declaration video:
 7. Show the persistent JETKIZ location notification while the courier is online.
 8. Put the app in the background and return to it.
 9. Go offline and show that location tracking stops.
+
+## Release
+
+Before uploading to Google Play, build the production-signed bundle locally with the production upload key:
+
+```bash
+flutter clean
+flutter pub get
+flutter build appbundle --release
+```
+
+Upload `build/app/outputs/bundle/release/app-release.aab` only after CI is green.
