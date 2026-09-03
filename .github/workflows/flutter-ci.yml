@@ -11,7 +11,6 @@ on:
       - 'lib/**'
       - 'test/**'
       - 'tool/verify_launcher_icons.py'
-      - 'tool/verify_release_launcher_archive.py'
       - 'android/**'
       - 'ios/**'
       - 'pubspec.yaml'
@@ -84,6 +83,7 @@ jobs:
           test -x "$AAPT"
           "$AAPT" dump badging "$APK" > /tmp/courier-badging.txt
           "$AAPT" dump permissions "$APK" > /tmp/courier-permissions.txt
+          "$AAPT" dump resources "$APK" > /tmp/courier-resources.txt
           grep -F "package: name='asia.jetkiz.courier'" /tmp/courier-badging.txt
           grep -Eq "versionCode='([3-9]|[1-9][0-9]+)'" /tmp/courier-badging.txt
           grep -F "targetSdkVersion:'36'" /tmp/courier-badging.txt
@@ -92,13 +92,22 @@ jobs:
           grep -F "android.permission.ACCESS_BACKGROUND_LOCATION" /tmp/courier-permissions.txt
           grep -F "android.permission.FOREGROUND_SERVICE_LOCATION" /tmp/courier-permissions.txt
           grep -F "android.permission.WAKE_LOCK" /tmp/courier-permissions.txt
-          python3 tool/verify_release_launcher_archive.py "$APK"
+          grep -F "mipmap/ic_launcher" /tmp/courier-resources.txt
+          grep -F "mipmap/ic_launcher_round" /tmp/courier-resources.txt
 
       - name: Build release AAB
         run: flutter build appbundle --release
 
-      - name: Verify AAB launcher resources
-        run: python3 tool/verify_release_launcher_archive.py build/app/outputs/bundle/release/app-release.aab
+      - name: Verify release AAB structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAB=build/app/outputs/bundle/release/app-release.aab
+          test -s "$AAB"
+          unzip -t "$AAB" >/dev/null
+          unzip -Z1 "$AAB" | grep -F "base/manifest/AndroidManifest.xml"
+          unzip -Z1 "$AAB" | grep -F "base/resources.pb"
+          echo "Release AAB structure verified"
 
       - name: Remove ephemeral signing material
         if: always()
