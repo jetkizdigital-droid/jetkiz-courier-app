@@ -28,7 +28,7 @@ Reviewer flow for the location declaration video:
 
 ## Release
 
-Before uploading to Google Play, build the production-signed bundle locally with the production upload key:
+Before uploading to Google Play, build the production-signed bundle locally with the real JETKIZ upload key (the CI key is intentionally temporary and must never be uploaded to Play):
 
 ```bash
 flutter clean
