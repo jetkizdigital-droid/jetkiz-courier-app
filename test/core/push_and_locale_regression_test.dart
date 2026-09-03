@@ -46,24 +46,30 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{});
     });
 
-    test('Russian legacy home keys resolve to readable labels', () async {
+    test('Russian home keys resolve to readable labels', () async {
       final locale = CourierLocaleController.instance;
       await locale.selectBeforeLogin('ru');
 
       expect(locale.t('home.earnings'), 'Заработано сегодня');
       expect(locale.t('home.online'), 'Вы на линии');
+      expect(locale.t('home.order'), 'Заказ');
+      expect(locale.t('home.goOnline'), 'Выйти на линию');
+      expect(locale.t('home.goOffline'), 'Выйти с линии');
       expect(
         locale.t('home.onlineDescription'),
         'GPS активен для назначения и доставки',
       );
     });
 
-    test('Kazakh legacy home keys resolve to readable labels', () async {
+    test('Kazakh home keys resolve to readable labels', () async {
       final locale = CourierLocaleController.instance;
       await locale.selectBeforeLogin('kk');
 
       expect(locale.t('home.earnings'), 'Бүгінгі табыс');
       expect(locale.t('home.online'), 'Сіз желідесіз');
+      expect(locale.t('home.order'), 'Тапсырыс');
+      expect(locale.t('home.goOnline'), 'Желіге шығу');
+      expect(locale.t('home.goOffline'), 'Желіден шығу');
       expect(
         locale.t('home.onlineDescription'),
         'GPS тағайындау және жеткізу үшін қосулы',
