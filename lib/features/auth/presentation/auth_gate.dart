@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
+import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
 import 'package:jetkiz_courier_app/core/storage/token_storage.dart';
 import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 
@@ -63,6 +64,14 @@ class _AuthGateState extends State<AuthGate> {
       }
 
       await _api.get('/couriers/me');
+
+      // Push registration used to exist as a service but was never invoked by
+      // the courier authentication flow. That left production couriers without
+      // an active FCM token, so assignments were visible only after reopening
+      // the app/polling the API. Registration is best-effort: push must never
+      // block a valid courier login.
+      await _restorePushRegistrationBestEffort();
+
       if (!mounted) return;
 
       Navigator.of(context).pushReplacement(
@@ -84,6 +93,23 @@ class _AuthGateState extends State<AuthGate> {
       _showRetryableError(_keyFor(error));
     } catch (_) {
       _showRetryableError('error.generic');
+    }
+  }
+
+  Future<void> _restorePushRegistrationBestEffort() async {
+    PushRegistrationService? push;
+    try {
+      final settingsEnvelope = _asMap(await _api.get('/client-settings/me'));
+      final settings = _asMap(settingsEnvelope['settings']);
+      if (settings['pushEnabled'] == false) return;
+
+      push = PushRegistrationService(apiClient: _api);
+      await push.initializeAndRegister();
+    } catch (_) {
+      // Login remains usable offline/when Firebase is temporarily unavailable.
+      // Profile -> Notifications can retry registration explicitly later.
+    } finally {
+      await push?.dispose();
     }
   }
 
