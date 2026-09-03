@@ -43,8 +43,26 @@ class _CourierShellState extends State<CourierShell>
     } catch (_) {
       // Local language remains available if settings sync is unavailable.
     }
+
     try {
-      await _pushRegistration.initializeAndRegister();
+      final settingsEnvelope = _asMap(await _api.get('/client-settings/me'));
+      final settings = _asMap(settingsEnvelope['settings']);
+
+      // A courier who explicitly disabled notifications must stay disabled.
+      // Previously every app resume re-registered an FCM token even while the
+      // backend preference was false. The server still suppressed delivery,
+      // but the device/token state became misleading and accumulated tokens.
+      if (settings['pushEnabled'] == false) {
+        debugPrint('Courier push registration skipped: preference disabled');
+        return;
+      }
+
+      final result = await _pushRegistration.initializeAndRegister();
+      if (!result.success) {
+        debugPrint(
+          'Courier push registration incomplete: ${result.message ?? 'unknown'}',
+        );
+      }
     } catch (error) {
       debugPrint('Courier push registration failed: ${error.runtimeType}');
     }
@@ -53,8 +71,8 @@ class _CourierShellState extends State<CourierShell>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // initializeAndRegister replaces its own token-refresh subscription, so
-      // resume is a safe best-effort recovery without listener duplication.
+      // Re-check the server preference before any token registration. This
+      // also recovers a valid token after an OS/Firebase token rotation.
       unawaited(_startAuthenticatedSession());
     }
   }
@@ -119,4 +137,10 @@ class _CourierShellState extends State<CourierShell>
       ),
     );
   }
+}
+
+Map<String, dynamic> _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return <String, dynamic>{};
 }
