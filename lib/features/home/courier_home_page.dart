@@ -8,6 +8,8 @@ import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/time/almaty_date_range.dart';
 import 'package:jetkiz_courier_app/features/notifications/presentation/courier_notifications_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/courier_order_details_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CourierHomePage extends StatefulWidget {
   const CourierHomePage({super.key});
@@ -18,6 +20,10 @@ class CourierHomePage extends StatefulWidget {
 
 class _CourierHomePageState extends State<CourierHomePage>
     with WidgetsBindingObserver {
+  static const String _backgroundLocationDisclosureKey =
+      'jetkiz.courier.background_location_disclosure.v1';
+  static final Uri _privacyUri = Uri.parse('https://jetkiz.asia/privacy');
+
   late final ApiClient _client;
   late final _CourierHomeApi _api;
   final CourierLocationService _location = CourierLocationService();
@@ -134,6 +140,76 @@ class _CourierHomePageState extends State<CourierHomePage>
     }
   }
 
+  Future<bool> _ensureBackgroundLocationDisclosure() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_backgroundLocationDisclosureKey) == true) return true;
+    if (!mounted) return false;
+
+    final isKk = _locale.isKazakh;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          isKk
+              ? 'Фондық геолокацияны пайдалану'
+              : 'Использование геолокации в фоне',
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isKk
+                    ? 'JETKIZ сіз желіде болған кезде тапсырыстарды тағайындау, жеткізу бағытын жүргізу және жеткізу барысын растау үшін нақты орналасқан жеріңізді пайдаланады.'
+                    : 'JETKIZ использует ваше точное местоположение, когда вы на линии, чтобы назначать заказы, вести маршрут доставки и подтверждать ход доставки.',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                isKk
+                    ? 'Орналасқан жер туралы деректер қолданба жабық болғанда немесе экран өшірулі кезде де өңделуі және JETKIZ серверіне жіберілуі мүмкін. Бұл тек курьер желіде болған уақытта орындалады. Желіден шыққаннан кейін фондық геолокация тоқтатылады.'
+                    : 'Данные о местоположении могут обрабатываться и передаваться на сервер JETKIZ, даже когда приложение закрыто или экран выключен. Это происходит только пока курьер находится на линии. После выхода с линии фоновая геолокация прекращается.',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                isKk
+                    ? 'Жалғастыру арқылы сіз жүйелік геолокация рұқсатын сұрауға өтесіз.'
+                    : 'Нажав «Продолжить», вы перейдёте к системному запросу разрешения на геолокацию.',
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => unawaited(
+                  launchUrl(_privacyUri, mode: LaunchMode.externalApplication),
+                ),
+                child: Text(
+                  isKk ? 'Құпиялық саясаты' : 'Политика конфиденциальности',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(isKk ? 'Қазір емес' : 'Не сейчас'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(isKk ? 'Жалғастыру' : 'Продолжить'),
+          ),
+        ],
+      ),
+    );
+
+    if (accepted == true) {
+      await prefs.setBool(_backgroundLocationDisclosureKey, true);
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _toggleOnline() async {
     if (_changingOnline) return;
     final next = !_isOnline;
@@ -146,6 +222,9 @@ class _CourierHomePageState extends State<CourierHomePage>
     setState(() => _changingOnline = true);
     try {
       if (next) {
+        final disclosureAccepted = await _ensureBackgroundLocationDisclosure();
+        if (!disclosureAccepted) return;
+
         final permission = await _location.ensurePermission();
         if (!permission.allowed) {
           _show(permission.message);
@@ -492,46 +571,34 @@ class _ActiveOrderCard extends StatelessWidget {
                 child: Text(
                   number.isEmpty
                       ? locale.t('home.activeOrder')
-                      : locale.format('home.orderNumber', {'number': number}),
+                      : '${locale.t('home.order')} №$number',
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              Text(
-                locale.t('status.$status'),
-                style: const TextStyle(
-                  color: Color(0xFF175CD3),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              _StatusPill(status: status),
             ],
           ),
-          if (restaurant.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              restaurant,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ],
-          if (address.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(address, style: const TextStyle(color: Color(0xFF667085))),
-          ],
           const SizedBox(height: 12),
-          Text(
-            locale.format('home.income', {'amount': _money(income)}),
-            style: const TextStyle(
-              color: Color(0xFF2F8731),
-              fontWeight: FontWeight.w800,
-              fontSize: 17,
+          if (restaurant.isNotEmpty)
+            _InfoRow(icon: Icons.storefront_outlined, text: restaurant),
+          if (address.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _InfoRow(icon: Icons.location_on_outlined, text: address),
+          ],
+          if (income > 0) ...[
+            const SizedBox(height: 8),
+            _InfoRow(
+              icon: Icons.payments_outlined,
+              text: '${_formatMoney(income)} ₸',
             ),
-          ),
+          ],
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            height: 52,
+            height: 48,
             child: FilledButton(
               onPressed: onOpen,
               child: Text(locale.t('home.openOrder')),
@@ -543,69 +610,134 @@ class _ActiveOrderCard extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.value, required this.label});
-  final String value;
-  final String label;
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.status});
+
+  final String status;
 
   @override
   Widget build(BuildContext context) {
+    final label = switch (status) {
+      'ACCEPTED' => 'Принят',
+      'COOKING' => 'Готовится',
+      'READY' => 'Готов',
+      'ON_THE_WAY' => 'В пути',
+      'DELIVERED' => 'Доставлен',
+      _ => status,
+    };
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE4E8EF)),
+        color: const Color(0xFFEAF7E8),
+        borderRadius: BorderRadius.circular(99),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 3),
-          Text(label, style: const TextStyle(color: Color(0xFF667085))),
-        ],
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF2E7D32),
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
 }
 
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(icon, size: 19, color: const Color(0xFF667085)),
+      const SizedBox(width: 8),
+      Expanded(child: Text(text)),
+    ],
+  );
+}
+
+class _ErrorCard extends StatelessWidget {
+  const _ErrorCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF4ED),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFF7C9A9)),
+    ),
+    child: Text(message),
+  );
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFFE4E8EF)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(color: Color(0xFF667085))),
+      ],
+    ),
+  );
+}
+
 class _IncomeCard extends StatelessWidget {
   const _IncomeCard({required this.amount});
+
   final int amount;
 
   @override
-  Widget build(BuildContext context) {
-    final locale = CourierLocaleController.instance;
-    return Container(
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F9EE),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFC8E8C1)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              locale.t('home.earned'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: const Color(0xFF101828),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.account_balance_wallet_outlined, color: Colors.white),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            CourierLocaleController.instance.t('home.earnings'),
+            style: const TextStyle(color: Colors.white70),
           ),
-          Text(
-            '${_money(amount)} ₸',
-            style: const TextStyle(
-              color: Color(0xFF2F8731),
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-            ),
+        ),
+        Text(
+          '${_formatMoney(amount)} ₸',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
 }
 
 class _OnlineCard extends StatelessWidget {
@@ -614,6 +746,7 @@ class _OnlineCard extends StatelessWidget {
     required this.loading,
     required this.onTap,
   });
+
   final bool isOnline;
   final bool loading;
   final VoidCallback onTap;
@@ -621,95 +754,65 @@ class _OnlineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final locale = CourierLocaleController.instance;
-    final background = isOnline ? const Color(0xFF2F8731) : Colors.white;
-    final foreground = isOnline ? Colors.white : const Color(0xFF344054);
-
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: loading ? null : onTap,
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.all(17),
-          child: Row(
-            children: [
-              if (loading)
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: foreground,
-                  ),
-                )
-              else
-                Icon(
-                  isOnline
-                      ? Icons.location_on_rounded
-                      : Icons.location_off_outlined,
-                  color: foreground,
-                ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      locale.t(isOnline ? 'home.online' : 'home.offline'),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: foreground,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      locale.t(
-                        isOnline ? 'home.onlineHint' : 'home.offlineHint',
-                      ),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: foreground.withValues(alpha: 0.75),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+        border: Border.all(color: const Color(0xFFE4E8EF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            locale.t(isOnline ? 'home.online' : 'home.offline'),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
-        ),
+          const SizedBox(height: 6),
+          Text(
+            locale.t(
+              isOnline ? 'home.onlineDescription' : 'home.offlineDescription',
+            ),
+            style: const TextStyle(color: Color(0xFF667085)),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: loading ? null : onTap,
+              icon: loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      isOnline ? Icons.pause_circle_outline : Icons.play_circle,
+                    ),
+              label: Text(
+                locale.t(isOnline ? 'home.goOffline' : 'home.goOnline'),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF5F5),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFF1C4C4)),
-    ),
-    child: Text(message),
-  );
-}
-
 Map<String, dynamic> _asMap(dynamic value) {
   if (value is Map<String, dynamic>) return value;
-  if (value is Map) return Map<String, dynamic>.from(value);
+  if (value is Map) {
+    return value.map((key, val) => MapEntry(key.toString(), val));
+  }
   return <String, dynamic>{};
 }
 
 Map<String, dynamic>? _map(dynamic value) {
-  if (value is Map<String, dynamic>) return value;
-  if (value is Map) return Map<String, dynamic>.from(value);
-  return null;
+  if (value == null) return null;
+  final map = _asMap(value);
+  return map.isEmpty ? null : map;
 }
 
 String _text(dynamic value) => value?.toString().trim() ?? '';
@@ -722,26 +825,20 @@ String _firstText(List<dynamic> values) {
   return '';
 }
 
+bool _bool(dynamic value) => value == true || value?.toString() == 'true';
+
 int? _int(dynamic value) {
   if (value is int) return value;
-  if (value is num) return value.round();
-  return int.tryParse(_text(value));
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
 }
 
-bool _bool(dynamic value) {
-  if (value is bool) return value;
-  if (value is num) return value != 0;
-  final text = _text(value).toLowerCase();
-  return text == 'true' || text == '1';
-}
-
-String _money(int value) {
-  final negative = value < 0;
-  final raw = value.abs().toString();
-  final out = StringBuffer();
+String _formatMoney(int value) {
+  final raw = value.toString();
+  final buffer = StringBuffer();
   for (var i = 0; i < raw.length; i++) {
-    if (i > 0 && (raw.length - i) % 3 == 0) out.write(' ');
-    out.write(raw[i]);
+    if (i > 0 && (raw.length - i) % 3 == 0) buffer.write(' ');
+    buffer.write(raw[i]);
   }
-  return '${negative ? '-' : ''}$out';
+  return buffer.toString();
 }
