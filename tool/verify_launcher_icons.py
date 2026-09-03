@@ -19,7 +19,6 @@ EXPECTED = {
     "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png": (96, "12e927189ed1bfe369a85b312df0ba9ef158dc68009e1c238c54003ea709a48f"),
     "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png": (144, "2287209ef49d47bde2e898e5afefe0e5156a91e19e309d1b820c93cf28e1cdad"),
     "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png": (192, "56a4d47ac3b9094781d55deab76816fc5db000dc265c64b35e1ccdf132975423"),
-    "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png": (432, "c5d127115a4104db65fd6fe4a0e2e4a84f29c9c9cfe8cd67b69470c5c80ddc88"),
 }
 
 
@@ -62,6 +61,24 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
         raise SystemExit(f"Adaptive icon background missing in {name}")
     if '@drawable/ic_launcher_foreground' not in xml:
         raise SystemExit(f"Adaptive icon foreground missing in {name}")
+
+foreground = ROOT / "android/app/src/main/res/drawable/ic_launcher_foreground.xml"
+if not foreground.is_file():
+    raise SystemExit("Adaptive vector foreground is missing")
+foreground_xml = foreground.read_text(encoding="utf-8")
+for required in (
+    '<vector',
+    'android:viewportWidth="432"',
+    'android:viewportHeight="432"',
+    'android:fillColor="#FFFFFFFF"',
+    'android:fillType="evenOdd"',
+    'android:pathData=',
+):
+    if required not in foreground_xml:
+        raise SystemExit(f"Adaptive vector foreground contract missing: {required}")
+
+if (ROOT / "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png").exists():
+    raise SystemExit("Raster adaptive foreground must not shadow the vector resource")
 
 colors = (ROOT / "android/app/src/main/res/values/colors.xml").read_text(encoding="utf-8")
 if "#4EAD35" not in colors.upper():
