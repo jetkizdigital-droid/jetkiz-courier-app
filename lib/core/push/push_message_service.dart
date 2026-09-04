@@ -68,7 +68,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
     final orderNumber = _readPushString(data, const ['orderNumber', 'number']);
     final title =
-        _readPushString(data, const ['title', 'notificationTitle', 'pushTitle']) ??
+        _readPushString(data, const [
+          'title',
+          'notificationTitle',
+          'pushTitle',
+        ]) ??
         'Новый заказ';
     final body =
         _readPushString(data, const [
@@ -127,7 +131,9 @@ Future<void> _savePendingNotificationPayload(String payload) async {
     await prefs.setString(PushMessageService.pendingIntentKey, payload);
     _pushLog('background local notification tap saved');
   } catch (error) {
-    _pushLog('failed to save background notification tap: ${_safePushError(error)}');
+    _pushLog(
+      'failed to save background notification tap: ${_safePushError(error)}',
+    );
   }
 }
 
@@ -291,7 +297,11 @@ class PushMessageService {
     final orderNumber = _readPushString(data, const ['orderNumber', 'number']);
 
     final title =
-        _readPushString(data, const ['title', 'notificationTitle', 'pushTitle']) ??
+        _readPushString(data, const [
+          'title',
+          'notificationTitle',
+          'pushTitle',
+        ]) ??
         message.notification?.title ??
         (courierOrder ? 'Новый заказ' : 'JETKIZ');
 
@@ -406,7 +416,8 @@ class PushMessageService {
         message.notification?.android?.channelId;
     final channelId = raw?.trim();
 
-    if (channelId == courierOrdersChannelId || channelId == 'courier_orders_v1') {
+    if (channelId == courierOrdersChannelId ||
+        channelId == 'courier_orders_v1') {
       return courierOrdersChannelId;
     }
     return defaultPushChannelId;
@@ -484,10 +495,16 @@ class PushNavigationIntent {
       'targetId',
     ]);
     final route = _readPushString(normalized, const ['route', 'targetRoute']);
-    final screen = _readPushString(normalized, const ['screen', 'targetScreen']);
+    final screen = _readPushString(normalized, const [
+      'screen',
+      'targetScreen',
+    ]);
     final action = _readPushString(normalized, const ['action', 'tapAction']);
     final status = _readPushString(normalized, const ['status', 'orderStatus']);
-    final orderNumber = _readPushInt(normalized, const ['orderNumber', 'number']);
+    final orderNumber = _readPushInt(normalized, const [
+      'orderNumber',
+      'number',
+    ]);
     final type = _readPushString(normalized, const [
       'type',
       'notificationType',
@@ -566,12 +583,18 @@ int? _readPushInt(Map<String, dynamic> data, List<String> keys) {
 
 bool _looksLikeCourierOrder(Map<String, dynamic> data) {
   final app = _readPushString(data, const ['app'])?.toLowerCase();
-  final type = _readPushString(data, const ['type', 'notificationType'])
-      ?.toLowerCase();
-  final action = _readPushString(data, const ['action', 'tapAction'])
-      ?.toLowerCase();
-  final screen = _readPushString(data, const ['screen', 'targetScreen'])
-      ?.toLowerCase();
+  final type = _readPushString(data, const [
+    'type',
+    'notificationType',
+  ])?.toLowerCase();
+  final action = _readPushString(data, const [
+    'action',
+    'tapAction',
+  ])?.toLowerCase();
+  final screen = _readPushString(data, const [
+    'screen',
+    'targetScreen',
+  ])?.toLowerCase();
   final orderId = _readPushString(data, const ['orderId', 'order_id']);
 
   return app == 'courier' ||
