@@ -145,6 +145,16 @@ jobs:
 
           """).lstrip('\n'),
           )
+          shell_source = shell.read_text(encoding='utf-8')
+          helper = """
+          Map<String, dynamic> _asMap(dynamic value) {
+            if (value is Map<String, dynamic>) return value;
+            if (value is Map) return Map<String, dynamic>.from(value);
+            return <String, dynamic>{};
+          }
+          """
+          shell_source = shell_source.replace(textwrap.dedent(helper), '')
+          shell.write_text(shell_source.rstrip() + '\n', encoding='utf-8')
 
           profile = Path('lib/features/profile/presentation/courier_profile_page.dart')
           profile_source = profile.read_text(encoding='utf-8')
