@@ -104,7 +104,7 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Verify Play metadata, API level, permissions and launcher resources
+      - name: Verify Play metadata, API level, permissions and notification resources
         shell: bash
         run: |
           set -euo pipefail
@@ -126,7 +126,8 @@ jobs:
           grep -F "android.permission.WAKE_LOCK" /tmp/courier-permissions.txt
           grep -F "mipmap/ic_launcher" /tmp/courier-resources.txt
           grep -F "mipmap/ic_launcher_round" /tmp/courier-resources.txt
-          echo 'Play metadata and notification permission verified'
+          unzip -Z1 "$APK" | grep -F "res/raw/courier_order.mp3"
+          echo 'Play metadata, permissions and notification resources verified'
 
       - name: Build release AAB
         run: flutter build appbundle --release
@@ -140,7 +141,6 @@ jobs:
           unzip -t "$AAB" >/dev/null
           unzip -Z1 "$AAB" | grep -F "base/manifest/AndroidManifest.xml"
           unzip -Z1 "$AAB" | grep -F "base/resources.pb"
-          unzip -Z1 "$AAB" | grep -F "base/res/raw/courier_order.mp3"
           echo "Release AAB structure verified"
 
       - name: Remove ephemeral signing material
