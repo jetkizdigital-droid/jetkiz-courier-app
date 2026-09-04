@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
+import 'package:jetkiz_courier_app/core/push/courier_push_preference.dart';
 import 'package:jetkiz_courier_app/features/finance/presentation/courier_finance_page.dart';
 import 'package:jetkiz_courier_app/features/home/courier_home_page.dart';
 import 'package:jetkiz_courier_app/features/orders/presentation/courier_orders_page.dart';
@@ -45,23 +46,21 @@ class _CourierShellState extends State<CourierShell>
     }
 
     try {
-      final settingsEnvelope = _asMap(await _api.get('/client-settings/me'));
-      final settings = _asMap(settingsEnvelope['settings']);
-
-      // A courier who explicitly disabled notifications must stay disabled.
-      // Previously every app resume re-registered an FCM token even while the
-      // backend preference was false. The server still suppressed delivery,
-      // but the device/token state became misleading and accumulated tokens.
-      if (settings['pushEnabled'] == false) {
-        debugPrint('Courier push registration skipped: preference disabled');
+      if (!await CourierPushPreference.isEnabled()) {
+        debugPrint(
+          'Courier push registration skipped: courier preference disabled',
+        );
         return;
       }
 
       final result = await _pushRegistration.initializeAndRegister();
       if (!result.success) {
         debugPrint(
-          'Courier push registration incomplete: ${result.message ?? 'unknown'}',
+          'Courier push registration incomplete: '
+          '${result.failureStage.name}: ${result.message ?? 'unknown'}',
         );
+      } else {
+        debugPrint('Courier push registration succeeded');
       }
     } catch (error) {
       debugPrint('Courier push registration failed: ${error.runtimeType}');
@@ -137,10 +136,4 @@ class _CourierShellState extends State<CourierShell>
       ),
     );
   }
-}
-
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map<String, dynamic>) return value;
-  if (value is Map) return Map<String, dynamic>.from(value);
-  return <String, dynamic>{};
 }

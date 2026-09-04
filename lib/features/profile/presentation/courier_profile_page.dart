@@ -7,6 +7,7 @@ import 'package:jetkiz_courier_app/core/auth/logout_service.dart';
 import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
+import 'package:jetkiz_courier_app/core/push/courier_push_preference.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -77,13 +78,8 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
       });
     }
     try {
-      final results = await Future.wait<dynamic>([
-        _client.get('/couriers/me'),
-        _client.get('/client-settings/me'),
-      ]);
-      final me = _asMap(results[0]);
-      final settingsEnvelope = _asMap(results[1]);
-      final settings = _asMap(settingsEnvelope['settings']);
+      final me = _asMap(await _client.get('/couriers/me'));
+      final pushEnabled = await CourierPushPreference.isEnabled();
       final profile = _map(me['courierProfile']) ?? _map(me['profile']);
       final first = _firstText([me['firstName'], profile?['firstName']]);
       final last = _firstText([me['lastName'], profile?['lastName']]);
@@ -100,7 +96,7 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
             _int(me['ordersCount']) ??
             _int(_map(me['stats'])?['completedOrders']) ??
             0;
-        _pushEnabled = settings['pushEnabled'] != false;
+        _pushEnabled = pushEnabled;
       });
     } on ApiException catch (error) {
       if (mounted) setState(() => _errorKey = _errorFor(error));
@@ -179,36 +175,61 @@ class _CourierProfilePageState extends State<CourierProfilePage> {
     final push = PushRegistrationService(apiClient: _client);
     try {
       if (value) {
-        // Turning the switch on must establish a real usable push channel,
-        // not only flip the backend preference. This requests Android/iOS
-        // notification permission, obtains FCM token and registers it first.
+        // Persist courier intent first so a temporary FCM/network failure
+        // cannot leave future authenticated starts permanently disabled.
+        await CourierPushPreference.setEnabled(true);
+        if (mounted) setState(() => _pushEnabled = true);
+
         final registration = await push.initializeAndRegister();
         final permissionGranted = registration.permission?.isGranted == true;
 
-        if (!permissionGranted || !registration.success) {
+        if (!permissionGranted) {
+          debugPrint(
+            'Courier push enable incomplete: '
+            '${registration.failureStage.name}, '
+            'permission=${registration.permission?.authorizationStatus ?? 'unknown'}',
+          );
           _show(
             _locale.isKazakh
-                ? 'Хабарландыруға рұқсат берілмеді. Телефон баптауларында JETKIZ хабарландыруларын қосып, қайта көріңіз.'
-                : 'Не удалось включить уведомления. Разрешите уведомления JETKIZ в настройках телефона и попробуйте ещё раз.',
+                ? 'Хабарландырулар қосылды, бірақ телефон JETKIZ хабарландыруларына рұқсат бермеген. Телефон баптауларында рұқсатты қосыңыз.'
+                : 'Уведомления включены, но телефон не дал JETKIZ разрешение на уведомления. Разрешите их в настройках телефона.',
           );
           return;
         }
 
-        await _client.patch('/client-settings/me', {'pushEnabled': true});
+        if (!registration.success) {
+          debugPrint(
+            'Courier push enable incomplete: '
+            '${registration.failureStage.name}: ${registration.message ?? 'unknown'}',
+          );
+          _show(
+            _locale.isKazakh
+                ? 'Хабарландырулар қосылды. Құрылғыны push жүйесіне тіркеуді қолданба автоматты түрде қайталайды.'
+                : 'Уведомления включены. Приложение автоматически повторит регистрацию устройства для push.',
+          );
+          return;
+        }
+
+        debugPrint('Courier push enabled: device registered');
+        _show(
+          _locale.isKazakh ? 'Хабарландырулар қосылды' : 'Уведомления включены',
+        );
       } else {
-        await _client.patch('/client-settings/me', {'pushEnabled': false});
+        await CourierPushPreference.setEnabled(false);
+        if (mounted) setState(() => _pushEnabled = false);
         try {
           await push.unregisterCurrentToken();
-        } catch (_) {
-          // pushEnabled=false is already enforced by backend.
+        } catch (error) {
+          debugPrint(
+            'Courier push unregister failed after local preference disabled: '
+            '${error.runtimeType}',
+          );
         }
       }
-
-      if (!mounted) return;
-      setState(() => _pushEnabled = value);
     } on ApiException catch (error) {
       _show(_locale.t(_errorFor(error)));
-    } catch (_) {
+    } catch (error) {
+      debugPrint('Courier push preference update failed: ${error.runtimeType}');
       _show(_locale.t('profile.settingsSaveFailed'));
     } finally {
       await push.dispose();

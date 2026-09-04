@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_registration_service.dart';
+import 'package:jetkiz_courier_app/core/push/courier_push_preference.dart';
 import 'package:jetkiz_courier_app/core/storage/token_storage.dart';
 import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 
@@ -99,15 +100,20 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _restorePushRegistrationBestEffort() async {
     PushRegistrationService? push;
     try {
-      final settingsEnvelope = _asMap(await _api.get('/client-settings/me'));
-      final settings = _asMap(settingsEnvelope['settings']);
-      if (settings['pushEnabled'] == false) return;
+      if (!await CourierPushPreference.isEnabled()) return;
 
       push = PushRegistrationService(apiClient: _api);
-      await push.initializeAndRegister();
-    } catch (_) {
-      // Login remains usable offline/when Firebase is temporarily unavailable.
-      // Profile -> Notifications can retry registration explicitly later.
+      final result = await push.initializeAndRegister();
+      if (!result.success) {
+        debugPrint(
+          'Courier push registration incomplete during auth: '
+          '${result.failureStage.name}: ${result.message ?? 'unknown'}',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        'Courier push registration failed during auth: ${error.runtimeType}',
+      );
     } finally {
       await push?.dispose();
     }
