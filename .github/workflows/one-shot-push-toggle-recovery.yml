@@ -1,0 +1,148 @@
+name: One-shot courier push toggle recovery
+
+on:
+  push:
+    branches:
+      - fix/courier-push-toggle-recovery
+    paths:
+      - .github/workflows/one-shot-push-toggle-recovery.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/courier-push-toggle-recovery
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Apply push preference recovery fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          profile = Path('lib/features/profile/presentation/courier_profile_page.dart')
+          source = profile.read_text(encoding='utf-8')
+          start = source.index('  Future<void> _setPushEnabled(bool value) async {')
+          end = source.index('  Future<void> _logoutAccount() async {', start)
+          replacement = '''  Future<void> _setPushEnabled(bool value) async {
+            if (_savingSettings || value == _pushEnabled) return;
+            setState(() => _savingSettings = true);
+            final push = PushRegistrationService(apiClient: _client);
+            try {
+              if (value) {
+                // Persist the user's intent first. If FCM or the OS permission is
+                // temporarily unavailable, the next authenticated start/resume can
+                // retry registration instead of being permanently blocked by the
+                // stale pushEnabled=false preference.
+                await _client.patch('/client-settings/me', {'pushEnabled': true});
+                if (mounted) setState(() => _pushEnabled = true);
+
+                final registration = await push.initializeAndRegister();
+                final permissionGranted = registration.permission?.isGranted == true;
+
+                if (!permissionGranted) {
+                  debugPrint(
+                    'Courier push enable incomplete: stage=${registration.failureStage.name}, '
+                    'permission=${registration.permission?.authorizationStatus ?? 'unknown'}',
+                  );
+                  _show(
+                    _locale.isKazakh
+                        ? 'Хабарландырулар қосылды, бірақ телефон JETKIZ хабарландыруларына рұқсат бермеген. Телефон баптауларында рұқсатты қосыңыз.'
+                        : 'Уведомления включены, но телефон не дал JETKIZ разрешение на уведомления. Разрешите их в настройках телефона.',
+                  );
+                  return;
+                }
+
+                if (!registration.success) {
+                  debugPrint(
+                    'Courier push enable incomplete: stage=${registration.failureStage.name}, '
+                    'message=${registration.message ?? 'unknown'}',
+                  );
+                  _show(
+                    _locale.isKazakh
+                        ? 'Хабарландырулар қосылды. Құрылғыны push жүйесіне тіркеуді қолданба автоматты түрде қайталайды.'
+                        : 'Уведомления включены. Приложение автоматически повторит регистрацию устройства для push.',
+                  );
+                  return;
+                }
+
+                debugPrint('Courier push enabled: device registered');
+                _show(
+                  _locale.isKazakh
+                      ? 'Хабарландырулар қосылды'
+                      : 'Уведомления включены',
+                );
+              } else {
+                await _client.patch('/client-settings/me', {'pushEnabled': false});
+                if (mounted) setState(() => _pushEnabled = false);
+                try {
+                  await push.unregisterCurrentToken();
+                } catch (error) {
+                  debugPrint(
+                    'Courier push unregister failed after preference disabled: '
+                    '${error.runtimeType}',
+                  );
+                }
+              }
+            } on ApiException catch (error) {
+              _show(_locale.t(_errorFor(error)));
+            } catch (error) {
+              debugPrint('Courier push preference update failed: ${error.runtimeType}');
+              _show(_locale.t('profile.settingsSaveFailed'));
+            } finally {
+              await push.dispose();
+              if (mounted) setState(() => _savingSettings = false);
+            }
+          }
+
+'''
+          profile.write_text(source[:start] + replacement + source[end:], encoding='utf-8')
+
+          test = Path('test/core/push_registration_result_test.dart')
+          test_source = test.read_text(encoding='utf-8')
+          if "import 'dart:io';" not in test_source:
+              test_source = "import 'dart:io';\n\n" + test_source
+          marker = "notification preference is persisted before FCM registration"
+          if marker not in test_source:
+              insert = '''
+
+  test('notification preference is persisted before FCM registration', () {
+    final source = File(
+      'lib/features/profile/presentation/courier_profile_page.dart',
+    ).readAsStringSync();
+    final enableIndex = source.indexOf(
+      "await _client.patch('/client-settings/me', {'pushEnabled': true});",
+    );
+    final registrationIndex = source.indexOf(
+      'final registration = await push.initializeAndRegister();',
+    );
+
+    expect(enableIndex, greaterThanOrEqualTo(0));
+    expect(registrationIndex, greaterThan(enableIndex));
+    expect(source, contains('setState(() => _pushEnabled = true)'));
+  });
+'''
+              closing = test_source.rfind('\n}')
+              if closing < 0:
+                  raise RuntimeError('Could not find test main closing brace')
+              test_source = test_source[:closing] + insert + test_source[closing:]
+          test.write_text(test_source, encoding='utf-8')
+      - run: dart format lib test
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: Commit clean fix and remove one-shot workflow
+        run: |
+          git config user.name "jetkizdigital-droid"
+          git config user.email "jetkizdigital@gmail.com"
+          git add lib/features/profile/presentation/courier_profile_page.dart test/core/push_registration_result_test.dart
+          git rm .github/workflows/one-shot-push-toggle-recovery.yml
+          git commit -m "fix(push): recover courier notification enable flow"
+          git push origin HEAD:fix/courier-push-toggle-recovery
