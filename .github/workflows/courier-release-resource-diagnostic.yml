@@ -1,0 +1,67 @@
+name: Courier release resource diagnostic
+
+on:
+  push:
+    branches:
+      - audit/courier-release-resources
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Prepare ephemeral CI release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/courier-ci-upload.jks" \
+            -storepass ci-not-for-production \
+            -keypass ci-not-for-production \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -alias courier-ci \
+            -dname "CN=JETKIZ Courier CI,O=JETKIZ,C=KZ"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/courier-ci-upload.jks
+          storePassword=ci-not-for-production
+          keyAlias=courier-ci
+          keyPassword=ci-not-for-production
+          EOF
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Inspect APK resource archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          AAPT="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
+          echo '--- ZIP entries containing courier/order/raw ---'
+          unzip -Z1 "$APK" | grep -Ei 'courier|order|raw' || true
+          echo '--- AAPT resource entries containing courier/order/raw ---'
+          "$AAPT" dump resources "$APK" | grep -Ei 'courier|order|raw' || true
+          echo '--- resources.arsc strings containing courier_order ---'
+          unzip -p "$APK" resources.arsc | strings | grep -F 'courier_order' || true
+          echo '--- MP3 files in APK ---'
+          unzip -Z1 "$APK" | grep -Ei '\.mp3$' || true
+
+      - name: Remove ephemeral signing material
+        if: always()
+        shell: bash
+        run: rm -f android/key.properties "$RUNNER_TEMP/courier-ci-upload.jks"
