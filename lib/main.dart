@@ -34,7 +34,9 @@ Future<void> main() async {
     await _configureCrashReporting();
     firebaseAvailable = true;
   } catch (error, stackTrace) {
-    debugPrint('Firebase initialization failed; push/crash reporting is disabled.');
+    debugPrint(
+      'Firebase initialization failed; push/crash reporting is disabled.',
+    );
     if (kDebugMode) {
       debugPrint('$error');
       debugPrintStack(stackTrace: stackTrace);

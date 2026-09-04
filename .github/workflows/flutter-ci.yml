@@ -73,7 +73,7 @@ jobs:
           echo 'Courier notification sources verified'
 
       - name: Format sources
-        run: dart format --output=none lib test
+        run: dart format --output=none --set-exit-if-changed lib test
 
       - name: Analyze
         run: flutter analyze

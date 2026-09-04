@@ -216,7 +216,8 @@ class PushRegistrationService {
 
     try {
       if (Platform.isAndroid) {
-        final nativeStatus = await permissions.Permission.notification.request();
+        final nativeStatus = await permissions.Permission.notification
+            .request();
         _log('native notification permission=${nativeStatus.name}');
 
         // Refresh Firebase Messaging state as well. On Android this call is
@@ -328,7 +329,8 @@ class PushRegistrationService {
 
     for (final item in items) {
       final mapped = _asMap(item);
-      if (mapped['deviceId']?.toString() == deviceId && mapped['isActive'] == true) {
+      if (mapped['deviceId']?.toString() == deviceId &&
+          mapped['isActive'] == true) {
         return true;
       }
     }
@@ -530,13 +532,7 @@ class PushPermissionResult {
   }
 }
 
-enum PushRegistrationFailureStage {
-  none,
-  firebase,
-  permission,
-  token,
-  backend,
-}
+enum PushRegistrationFailureStage { none, firebase, permission, token, backend }
 
 class PushRegistrationResult {
   const PushRegistrationResult({
