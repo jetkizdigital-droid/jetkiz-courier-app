@@ -41,6 +41,37 @@ jobs:
       - name: Verify branded launcher sources
         run: python3 tool/verify_launcher_icons.py
 
+      - name: Verify production Firebase client configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('android/app/google-services.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          assert data.get('project_info', {}).get('project_id') == 'jetkiz-mobile', 'Wrong Firebase project_id'
+          clients = data.get('client') or []
+          packages = {
+              item.get('client_info', {}).get('android_client_info', {}).get('package_name')
+              for item in clients
+          }
+          assert 'asia.jetkiz.courier' in packages, 'Courier package is missing from google-services.json'
+          print('Firebase client configuration verified')
+          PY
+
+      - name: Verify courier notification sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'android.permission.POST_NOTIFICATIONS' android/app/src/main/AndroidManifest.xml
+          grep -F 'com.google.firebase.messaging.default_notification_channel_id' android/app/src/main/AndroidManifest.xml
+          grep -F 'courier_orders_v2' android/app/src/main/AndroidManifest.xml
+          test -s android/app/src/main/res/raw/courier_order.mp3
+          grep -F "productionBaseUrl = 'https://api.jetkiz.asia'" lib/core/network/apiClient.dart
+          echo 'Courier notification sources verified'
+
       - name: Format sources
         run: dart format --output=none lib test
 
@@ -88,12 +119,14 @@ jobs:
           grep -Eq "versionCode='([3-9]|[1-9][0-9]+)'" /tmp/courier-badging.txt
           grep -F "targetSdkVersion:'36'" /tmp/courier-badging.txt
           grep -F "application-label:'JETKIZ Курьер'" /tmp/courier-badging.txt
+          grep -F "android.permission.POST_NOTIFICATIONS" /tmp/courier-permissions.txt
           grep -F "android.permission.ACCESS_FINE_LOCATION" /tmp/courier-permissions.txt
           grep -F "android.permission.ACCESS_BACKGROUND_LOCATION" /tmp/courier-permissions.txt
           grep -F "android.permission.FOREGROUND_SERVICE_LOCATION" /tmp/courier-permissions.txt
           grep -F "android.permission.WAKE_LOCK" /tmp/courier-permissions.txt
           grep -F "mipmap/ic_launcher" /tmp/courier-resources.txt
           grep -F "mipmap/ic_launcher_round" /tmp/courier-resources.txt
+          echo 'Play metadata and notification permission verified'
 
       - name: Build release AAB
         run: flutter build appbundle --release
@@ -107,6 +140,7 @@ jobs:
           unzip -t "$AAB" >/dev/null
           unzip -Z1 "$AAB" | grep -F "base/manifest/AndroidManifest.xml"
           unzip -Z1 "$AAB" | grep -F "base/resources.pb"
+          unzip -Z1 "$AAB" | grep -F "base/res/raw/courier_order.mp3"
           echo "Release AAB structure verified"
 
       - name: Remove ephemeral signing material
