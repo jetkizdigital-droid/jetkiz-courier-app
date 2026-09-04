@@ -33,15 +33,27 @@ jobs:
           python3 - <<'PY'
           import re
           from pathlib import Path
+
           path = Path('lib/core/push/push_message_service.dart')
           text = path.read_text(encoding='utf-8')
-          text, count = re.subn(
-              r"(?m)^\s*sound: 'courier_order\.mp3',\n",
+
+          text, literal_count = re.subn(
+              r"(?m)^\s*sound:\s*'courier_order\.mp3',\n",
               '',
               text,
           )
-          if count != 2:
-              raise SystemExit(f'expected 2 courier iOS custom sound references, found {count}')
+          text, ternary_count = re.subn(
+              r"(?m)^\s*sound:\s*courierOrder\s*\?\s*'courier_order\.mp3'\s*:\s*null,\n",
+              '',
+              text,
+          )
+
+          if literal_count != 1 or ternary_count != 1:
+              raise SystemExit(
+                  f'expected one literal and one ternary courier iOS sound reference; '
+                  f'found literal={literal_count} ternary={ternary_count}'
+              )
+
           path.write_text(text, encoding='utf-8')
           PY
 
