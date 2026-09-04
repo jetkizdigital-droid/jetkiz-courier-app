@@ -64,6 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git checkout -- pubspec.lock analysis_options.yaml
           rm -f .github/workflows/apply-courier-format-normalization.yml
           mapfile -t changed < <(git status --short | sed -E 's/^.. //')
           allowed='^(\.github/workflows/apply-courier-format-normalization\.yml|\.github/workflows/flutter-ci\.yml|lib/core/push/push_message_service\.dart)$'
