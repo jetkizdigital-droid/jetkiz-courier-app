@@ -39,8 +39,8 @@ jobs:
           text = push.read_text(encoding='utf-8')
           needle = "          sound: 'courier_order.mp3',\n"
           count = text.count(needle)
-          if count != 2:
-              raise SystemExit(f'Expected 2 courier iOS custom sound references, found {count}')
+          if count != 1:
+              raise SystemExit(f'Expected 1 courier iOS custom sound reference, found {count}')
           text = text.replace(needle, '')
           push.write_text(text, encoding='utf-8')
 
