@@ -43,82 +43,88 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  test('a protected 401 after successful refresh never clears new tokens', () async {
-    final storage = _MemoryTokenStorage('access-old', 'refresh-old');
-    var protectedCalls = 0;
-    var refreshCalls = 0;
+  test(
+    'a protected 401 after successful refresh never clears new tokens',
+    () async {
+      final storage = _MemoryTokenStorage('access-old', 'refresh-old');
+      var protectedCalls = 0;
+      var refreshCalls = 0;
 
-    final client = MockClient((request) async {
-      if (request.url.path == '/auth/refresh') {
-        refreshCalls += 1;
-        return http.Response(
-          '{"accessToken":"access-new","refreshToken":"refresh-new"}',
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-
-      if (request.url.path == '/protected') {
-        protectedCalls += 1;
-        return http.Response('unauthorized', 401);
-      }
-
-      return http.Response('not found', 404);
-    });
-
-    final api = ApiClient(client: client, tokenStorage: storage);
-    addTearDown(api.dispose);
-
-    await expectLater(
-      api.get('/protected'),
-      throwsA(
-        isA<ApiException>()
-            .having((error) => error.kind, 'kind', ApiErrorKind.unauthorized)
-            .having((error) => error.statusCode, 'statusCode', 401),
-      ),
-    );
-
-    expect(refreshCalls, 1);
-    expect(protectedCalls, 2);
-    expect(storage.accessToken, 'access-new');
-    expect(storage.refreshToken, 'refresh-new');
-    expect(storage.clearCount, 0);
-  });
-
-  test('stale refresh rejection accepts tokens rotated by another request', () async {
-    final storage = _MemoryTokenStorage('access-old', 'refresh-old');
-    var protectedCalls = 0;
-    var refreshCalls = 0;
-
-    final client = MockClient((request) async {
-      if (request.url.path == '/auth/refresh') {
-        refreshCalls += 1;
-        await storage.saveTokens('access-new', 'refresh-new');
-        return http.Response('stale refresh token', 401);
-      }
-
-      if (request.url.path == '/protected') {
-        protectedCalls += 1;
-        final authorization = request.headers['Authorization'];
-        if (authorization == 'Bearer access-new') {
-          return http.Response('{"ok":true}', 200);
+      final client = MockClient((request) async {
+        if (request.url.path == '/auth/refresh') {
+          refreshCalls += 1;
+          return http.Response(
+            '{"accessToken":"access-new","refreshToken":"refresh-new"}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
         }
-        return http.Response('expired access', 401);
-      }
 
-      return http.Response('not found', 404);
-    });
+        if (request.url.path == '/protected') {
+          protectedCalls += 1;
+          return http.Response('unauthorized', 401);
+        }
 
-    final api = ApiClient(client: client, tokenStorage: storage);
-    addTearDown(api.dispose);
+        return http.Response('not found', 404);
+      });
 
-    final response = await api.get('/protected');
+      final api = ApiClient(client: client, tokenStorage: storage);
+      addTearDown(api.dispose);
 
-    expect(response, {'ok': true});
-    expect(refreshCalls, 1);
-    expect(protectedCalls, 2);
-    expect(storage.accessToken, 'access-new');
-    expect(storage.refreshToken, 'refresh-new');
-    expect(storage.clearCount, 0);
-  });
+      await expectLater(
+        api.get('/protected'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.kind, 'kind', ApiErrorKind.unauthorized)
+              .having((error) => error.statusCode, 'statusCode', 401),
+        ),
+      );
+
+      expect(refreshCalls, 1);
+      expect(protectedCalls, 2);
+      expect(storage.accessToken, 'access-new');
+      expect(storage.refreshToken, 'refresh-new');
+      expect(storage.clearCount, 0);
+    },
+  );
+
+  test(
+    'stale refresh rejection accepts tokens rotated by another request',
+    () async {
+      final storage = _MemoryTokenStorage('access-old', 'refresh-old');
+      var protectedCalls = 0;
+      var refreshCalls = 0;
+
+      final client = MockClient((request) async {
+        if (request.url.path == '/auth/refresh') {
+          refreshCalls += 1;
+          await storage.saveTokens('access-new', 'refresh-new');
+          return http.Response('stale refresh token', 401);
+        }
+
+        if (request.url.path == '/protected') {
+          protectedCalls += 1;
+          final authorization = request.headers['Authorization'];
+          if (authorization == 'Bearer access-new') {
+            return http.Response('{"ok":true}', 200);
+          }
+          return http.Response('expired access', 401);
+        }
+
+        return http.Response('not found', 404);
+      });
+
+      final api = ApiClient(client: client, tokenStorage: storage);
+      addTearDown(api.dispose);
+
+      final response = await api.get('/protected');
+
+      expect(response, {'ok': true});
+      expect(refreshCalls, 1);
+      expect(protectedCalls, 2);
+      expect(storage.accessToken, 'access-new');
+      expect(storage.refreshToken, 'refresh-new');
+      expect(storage.clearCount, 0);
+    },
+  );
 }

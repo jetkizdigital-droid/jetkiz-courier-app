@@ -5,10 +5,7 @@ void main() {
   test('notification-device register envelope is treated as success', () {
     final result = PushRegistrationResult.fromResponse({
       'success': true,
-      'deviceToken': {
-        'id': 'push-device-1',
-        'isActive': true,
-      },
+      'deviceToken': {'id': 'push-device-1', 'isActive': true},
     }, token: 'test-token-value');
 
     expect(result.success, isTrue);
@@ -18,10 +15,7 @@ void main() {
 
   test('deviceToken envelope alone is treated as success', () {
     final result = PushRegistrationResult.fromResponse({
-      'deviceToken': {
-        'id': 'push-device-1',
-        'isActive': true,
-      },
+      'deviceToken': {'id': 'push-device-1', 'isActive': true},
     }, token: 'test-token-value');
 
     expect(result.success, isTrue);

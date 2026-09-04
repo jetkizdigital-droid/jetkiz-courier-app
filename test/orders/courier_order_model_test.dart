@@ -41,14 +41,17 @@ void main() {
     expect(order.clientAddress, contains('домофон: 45К'));
   });
 
-  test('courier finance snapshot is parsed without recomputing business rules', () {
-    final order = CourierOrderDetails.fromJson(base);
+  test(
+    'courier finance snapshot is parsed without recomputing business rules',
+    () {
+      final order = CourierOrderDetails.fromJson(base);
 
-    expect(order.courierFeeGross, 850);
-    expect(order.courierCommissionPctApplied, 15);
-    expect(order.courierCommissionAmount, 128);
-    expect(order.courierNetAmount, 722);
-  });
+      expect(order.courierFeeGross, 850);
+      expect(order.courierCommissionPctApplied, 15);
+      expect(order.courierCommissionAmount, 128);
+      expect(order.courierNetAmount, 722);
+    },
+  );
 
   test('pickup order cannot expose courier actions', () {
     final order = CourierOrderDetails.fromJson({
