@@ -1,0 +1,64 @@
+name: One-shot Courier Release Repair
+
+on:
+  push:
+    branches:
+      - fix/courier-release-sound-final
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: fix/courier-release-sound-final
+          fetch-depth: 0
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Use default iOS notification sound
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('lib/core/push/push_message_service.dart')
+          text = path.read_text(encoding='utf-8')
+          needle = "          sound: 'courier_order.mp3',\n"
+          count = text.count(needle)
+          if count != 2:
+              raise SystemExit(f'expected 2 courier iOS custom sound references, found {count}')
+          text = text.replace(needle, '')
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Normalize Dart formatting
+        run: dart format lib test
+
+      - name: Validate source
+        run: |
+          git diff --check
+          flutter analyze
+          flutter test
+
+      - name: Commit clean source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib test
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "fix(push): use default iOS courier sound and format sources"
+          git push origin HEAD:fix/courier-release-sound-final
