@@ -126,7 +126,7 @@ jobs:
           grep -F "android.permission.WAKE_LOCK" /tmp/courier-permissions.txt
           grep -F "mipmap/ic_launcher" /tmp/courier-resources.txt
           grep -F "mipmap/ic_launcher_round" /tmp/courier-resources.txt
-          unzip -Z1 "$APK" | grep -F "res/raw/courier_order.mp3"
+          grep -F "asia.jetkiz.courier:raw/courier_order" /tmp/courier-resources.txt
           echo 'Play metadata, permissions and notification resources verified'
 
       - name: Build release AAB
