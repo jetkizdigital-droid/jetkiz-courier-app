@@ -233,7 +233,7 @@ class PushRegistrationService {
           );
         } catch (_) {}
 
-        return checkPermission();
+        return await checkPermission();
       }
 
       final settings = await firebaseMessaging.requestPermission(
