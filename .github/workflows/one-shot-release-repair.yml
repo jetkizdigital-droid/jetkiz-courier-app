@@ -31,14 +31,17 @@ jobs:
       - name: Use default iOS notification sound
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
           path = Path('lib/core/push/push_message_service.dart')
           text = path.read_text(encoding='utf-8')
-          needle = "          sound: 'courier_order.mp3',\n"
-          count = text.count(needle)
+          text, count = re.subn(
+              r"(?m)^\s*sound: 'courier_order\.mp3',\n",
+              '',
+              text,
+          )
           if count != 2:
               raise SystemExit(f'expected 2 courier iOS custom sound references, found {count}')
-          text = text.replace(needle, '')
           path.write_text(text, encoding='utf-8')
           PY
 
