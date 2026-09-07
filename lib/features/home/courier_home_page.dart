@@ -31,6 +31,7 @@ class _CourierHomePageState extends State<CourierHomePage>
   Timer? _pollTimer;
   StreamSubscription<CourierOrderEvent>? _orderEvents;
   bool _foreground = true;
+  bool _tabActive = true;
   bool _loading = true;
   bool _refreshing = false;
   bool _changingOnline = false;
@@ -52,12 +53,27 @@ class _CourierHomePageState extends State<CourierHomePage>
     _client = ApiClient();
     _api = _CourierHomeApi(_client);
     _orderEvents = CourierOrderEvents.stream.listen((_) {
-      if (_foreground) unawaited(_load(silent: true));
+      if (_foreground && _tabActive) {
+        unawaited(_load(silent: true));
+      }
     });
     unawaited(_load());
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_foreground) unawaited(_load(silent: true));
+      if (_foreground && _tabActive) {
+        unawaited(_load(silent: true));
+      }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wasActive = _tabActive;
+    _tabActive = TickerMode.of(context);
+
+    if (!wasActive && _tabActive && !_refreshing) {
+      unawaited(_load(silent: true));
+    }
   }
 
   @override
@@ -73,7 +89,9 @@ class _CourierHomePageState extends State<CourierHomePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _foreground;
     _foreground = state == AppLifecycleState.resumed;
-    if (!wasForeground && _foreground) unawaited(_load(silent: true));
+    if (!wasForeground && _foreground && _tabActive) {
+      unawaited(_load(silent: true));
+    }
   }
 
   Future<void> _load({bool silent = false}) async {
