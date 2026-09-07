@@ -105,10 +105,17 @@ class _CourierShellState extends State<CourierShell>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Keep the same tab widget instances for the whole authenticated
-      // session. This preserves scroll/state and avoids reconstructing four
-      // stateful page roots whenever the shell itself rebuilds.
-      body: IndexedStack(index: _currentIndex, children: _pages),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: List<Widget>.generate(
+          _pages.length,
+          (index) => TickerMode(
+            enabled: index == _currentIndex,
+            child: _pages[index],
+          ),
+          growable: false,
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: _setTab,
