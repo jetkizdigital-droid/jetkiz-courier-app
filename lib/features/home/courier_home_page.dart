@@ -78,26 +78,25 @@ class _CourierHomePageState extends State<CourierHomePage>
 
   Future<void> _load({bool silent = false}) async {
     if (_refreshing) return;
-    if (mounted) {
+    _refreshing = true;
+
+    if (!silent && mounted) {
       setState(() {
-        if (silent) {
-          _refreshing = true;
-        } else {
-          _loading = true;
-        }
+        _loading = true;
         _errorKey = null;
       });
     }
 
     try {
-      final results = await Future.wait<dynamic>([
+      // Profile and active order are the data needed to make the home screen
+      // usable. Do not keep the whole UI behind notification/finance metrics.
+      final critical = await Future.wait<dynamic>([
         _api.getMe(),
         _api.getActiveOrder(),
-        _api.getUnreadCount(),
-        _api.getTodayMetrics(),
       ]);
 
-      final me = results[0] as Map<String, dynamic>;
+      final me = critical[0] as Map<String, dynamic>;
+      final activeOrder = critical[1] as Map<String, dynamic>?;
       final profile = _map(me['courierProfile']) ?? _map(me['profile']);
       final firstName = _firstText([me['firstName'], profile?['firstName']]);
       final lastName = _firstText([me['lastName'], profile?['lastName']]);
@@ -106,38 +105,105 @@ class _CourierHomePageState extends State<CourierHomePage>
         lastName,
       ].where((value) => value.isNotEmpty).join(' ');
       final online = _bool(me['isOnline']) || _bool(profile?['isOnline']);
-      final metrics = results[3] as _TodayMetrics;
 
       if (!mounted) return;
-      setState(() {
-        _name = fullName;
-        _isOnline = online;
-        _activeOrder = results[1] as Map<String, dynamic>?;
-        _unread = results[2] as int;
-        _orders = metrics.orders;
-        _delivered = metrics.delivered;
-        _earnings = metrics.earnings;
-      });
+      final criticalChanged =
+          _name != fullName ||
+          _isOnline != online ||
+          _activeOrderKey(_activeOrder) != _activeOrderKey(activeOrder) ||
+          _errorKey != null ||
+          _loading;
 
+      if (criticalChanged) {
+        setState(() {
+          _name = fullName;
+          _isOnline = online;
+          _activeOrder = activeOrder;
+          _errorKey = null;
+          _loading = false;
+        });
+      }
+
+      // Location is operationally important, but starting/stopping the native
+      // tracking service must not hold the first usable frame hostage.
+      unawaited(_syncLocationState(online, activeOrder));
+
+      try {
+        final secondary = await Future.wait<dynamic>([
+          _api.getUnreadCount(),
+          _api.getTodayMetrics(),
+        ]);
+        if (!mounted) return;
+
+        final unread = secondary[0] as int;
+        final metrics = secondary[1] as _TodayMetrics;
+        if (_unread != unread ||
+            _orders != metrics.orders ||
+            _delivered != metrics.delivered ||
+            _earnings != metrics.earnings) {
+          setState(() {
+            _unread = unread;
+            _orders = metrics.orders;
+            _delivered = metrics.delivered;
+            _earnings = metrics.earnings;
+          });
+        }
+      } catch (_) {
+        // Secondary dashboard counters are best effort. Keep the last values
+        // instead of turning an otherwise usable courier home into an error.
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(() {
+          _errorKey = _errorFor(error);
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _errorKey = 'error.generic';
+          _loading = false;
+        });
+      }
+    } finally {
+      _refreshing = false;
+      if (mounted && _loading) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _syncLocationState(
+    bool online,
+    Map<String, dynamic>? activeOrder,
+  ) async {
+    try {
       if (online && !_location.isTracking) {
         final tracking = await _location.startTracking();
         if (!tracking.started && mounted) _show(tracking.message);
+        return;
       }
-      if (!online && _location.isTracking && _activeOrder == null) {
+      if (!online && _location.isTracking && activeOrder == null) {
         await _location.stopTracking();
       }
-    } on ApiException catch (error) {
-      if (mounted) setState(() => _errorKey = _errorFor(error));
     } catch (_) {
-      if (mounted) setState(() => _errorKey = 'error.generic');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _refreshing = false;
-        });
-      }
+      // Tracking errors are handled by the location service/next refresh. They
+      // must not block or replace the home UI.
     }
+  }
+
+  String _activeOrderKey(Map<String, dynamic>? order) {
+    if (order == null) return '';
+    return [
+      _text(order['id']),
+      _text(order['number']),
+      _text(order['status']),
+      _text(order['updatedAt']),
+      _text(order['courierFee']),
+      _text(order['courierFeeGross']),
+      _text(order['courierCommissionAmount']),
+    ].join('|');
   }
 
   Future<bool> _ensureBackgroundLocationDisclosure() async {
@@ -421,16 +487,6 @@ class _CourierHomePageState extends State<CourierHomePage>
                       loading: _changingOnline,
                       onTap: _toggleOnline,
                     ),
-                    if (_refreshing) ...[
-                      const SizedBox(height: 18),
-                      const Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
