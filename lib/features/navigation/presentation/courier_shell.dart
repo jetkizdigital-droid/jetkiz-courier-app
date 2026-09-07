@@ -23,6 +23,7 @@ class _CourierShellState extends State<CourierShell>
     with WidgetsBindingObserver {
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
+  late final List<Widget> _pages;
   late int _currentIndex;
 
   CourierLocaleController get _locale => CourierLocaleController.instance;
@@ -34,6 +35,12 @@ class _CourierShellState extends State<CourierShell>
     _api = ApiClient();
     _pushRegistration = PushRegistrationService(apiClient: _api);
     _currentIndex = widget.initialIndex.clamp(0, 3).toInt();
+    _pages = const <Widget>[
+      CourierHomePage(),
+      CourierOrdersPage(),
+      CourierFinancePage(),
+      CourierProfilePage(),
+    ];
     _locale.addListener(_localeChanged);
     unawaited(_startAuthenticatedSession());
   }
@@ -97,17 +104,11 @@ class _CourierShellState extends State<CourierShell>
 
   @override
   Widget build(BuildContext context) {
-    // Fresh widget instances make every preserved tab rebuild when the locale
-    // controller notifies the shell. IndexedStack still keeps each tab State.
-    final pages = <Widget>[
-      CourierHomePage(),
-      CourierOrdersPage(),
-      CourierFinancePage(),
-      CourierProfilePage(),
-    ];
-
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: pages),
+      // Keep the same tab widget instances for the whole authenticated
+      // session. This preserves scroll/state and avoids reconstructing four
+      // stateful page roots whenever the shell itself rebuilds.
+      body: IndexedStack(index: _currentIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: _setTab,
