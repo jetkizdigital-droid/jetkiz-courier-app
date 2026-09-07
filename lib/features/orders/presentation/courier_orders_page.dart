@@ -31,7 +31,10 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
   bool _loading = true;
   bool _refreshing = false;
   bool _requestInFlight = false;
+  bool _reloadRequested = false;
   bool _pollingActive = false;
+  bool _hasLoadedOnce = false;
+  int _dataGeneration = 0;
   String? _actionOrderId;
   String? _errorKey;
   _OrdersPeriod _period = _OrdersPeriod.today;
@@ -66,7 +69,7 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
     final wasActive = _tabActive;
     _tabActive = TickerMode.of(context);
 
-    if (!wasActive && _tabActive && !_requestInFlight) {
+    if (!wasActive && _tabActive) {
       unawaited(_load(silent: true));
     }
   }
@@ -105,23 +108,30 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
   }
 
   Future<void> _load({bool silent = false}) async {
-    if (_requestInFlight) return;
+    if (_requestInFlight) {
+      _reloadRequested = true;
+      return;
+    }
+
     _requestInFlight = true;
+    final generation = _dataGeneration;
+    final range = _range;
+    final hadLoaded = _hasLoadedOnce;
 
     if (mounted) {
       setState(() {
-        _refreshing = silent;
-        if (!silent) _loading = true;
-        _errorKey = null;
+        _refreshing = silent && hadLoaded;
+        if (!silent && !hadLoaded) _loading = true;
+        if (!silent || !hadLoaded) _errorKey = null;
       });
     }
 
     try {
       final results = await Future.wait<dynamic>([
         _loadActive(),
-        _loadHistory(_range),
+        _loadHistory(range),
       ]);
-      if (!mounted) return;
+      if (!mounted || generation != _dataGeneration) return;
 
       final active = results[0] as CourierOrderItem?;
       final history = (results[1] as List<CourierOrderItem>)
@@ -131,18 +141,35 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
       setState(() {
         _active = active;
         _history = history;
+        _hasLoadedOnce = true;
+        _errorKey = null;
       });
     } on ApiException catch (error) {
-      if (mounted) setState(() => _errorKey = _errorFor(error));
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = _errorFor(error));
+      }
     } on FormatException {
-      if (mounted) setState(() => _errorKey = 'error.generic');
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = 'error.generic');
+      }
     } finally {
       _requestInFlight = false;
-      if (mounted) {
+
+      if (mounted && generation == _dataGeneration) {
         setState(() {
           _loading = false;
           _refreshing = false;
         });
+      }
+
+      final shouldReload = _reloadRequested;
+      _reloadRequested = false;
+      if (mounted && shouldReload) {
+        unawaited(_load(silent: _hasLoadedOnce));
       }
     }
   }
@@ -153,26 +180,35 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
     }
 
     _pollingActive = true;
+    final generation = _dataGeneration;
+    final range = _range;
     try {
       final previousId = _active?.id;
+      final previousKey = _orderFingerprint(_active);
       final nextActive = await _loadActive();
-      if (!mounted) return;
+      if (!mounted || generation != _dataGeneration) return;
 
       final nextId = nextActive?.id;
-      setState(() {
-        _active = nextActive;
-        if (nextId != null) {
-          _history = _history
-              .where((order) => order.id != nextId)
-              .toList(growable: false);
-        }
-      });
+      final nextKey = _orderFingerprint(nextActive);
+      final historyContainsActive =
+          nextId != null && _history.any((order) => order.id == nextId);
+
+      if (previousKey != nextKey || historyContainsActive) {
+        setState(() {
+          _active = nextActive;
+          if (nextId != null) {
+            _history = _history
+                .where((order) => order.id != nextId)
+                .toList(growable: false);
+          }
+        });
+      }
 
       // History is expensive and does not need to be downloaded every 30s.
       // Refresh it only when an active order actually leaves/replaces the slot.
       if (previousId != null && previousId != nextId) {
-        final history = await _loadHistory(_range);
-        if (!mounted) return;
+        final history = await _loadHistory(range);
+        if (!mounted || generation != _dataGeneration) return;
         setState(() {
           _history = history
               .where((order) => nextId == null || order.id != nextId)
@@ -184,6 +220,23 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
     } finally {
       _pollingActive = false;
     }
+  }
+
+  String _orderFingerprint(CourierOrderItem? order) {
+    if (order == null) return '';
+    return [
+      order.id,
+      order.number,
+      order.status,
+      order.fulfillmentType,
+      order.assignedAt?.toIso8601String() ?? '',
+      order.pickedUpAt?.toIso8601String() ?? '',
+      order.deliveredAt?.toIso8601String() ?? '',
+      order.promisedAt?.toIso8601String() ?? '',
+      order.restaurantName ?? '',
+      order.clientAddress ?? '',
+      order.courierNetAmount ?? '',
+    ].join('|');
   }
 
   Future<CourierOrderItem?> _loadActive() async {
@@ -267,8 +320,12 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
     }
 
     if (!mounted) return;
-    setState(() => _period = period);
-    await _load();
+    _dataGeneration++;
+    setState(() {
+      _period = period;
+      _errorKey = null;
+    });
+    await _load(silent: _hasLoadedOnce);
   }
 
   Future<void> _open(CourierOrderItem order) async {
@@ -411,11 +468,11 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
   }
 
   Widget _body() {
-    if (_loading && _active == null && _history.isEmpty) {
+    if (_loading && !_hasLoadedOnce) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_errorKey != null && _active == null && _history.isEmpty) {
+    if (_errorKey != null && !_hasLoadedOnce) {
       return _StateView(
         icon: Icons.cloud_off_rounded,
         title: _locale.t(_errorKey!),
@@ -452,10 +509,6 @@ class _CourierOrdersPageState extends State<CourierOrdersPage>
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                if (_refreshing) ...[
-                  const LinearProgressIndicator(minHeight: 2),
-                  const SizedBox(height: 10),
-                ],
                 if (_active != null) ...[
                   Text(
                     _locale.t('orders.active'),
