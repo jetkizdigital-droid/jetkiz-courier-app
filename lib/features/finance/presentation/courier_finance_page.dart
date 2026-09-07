@@ -25,10 +25,13 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   bool _loading = true;
   bool _refreshing = false;
   bool _requestInFlight = false;
+  bool _reloadRequested = false;
   bool _summaryPolling = false;
   bool _loadingMore = false;
   bool _hasMoreLedger = false;
+  bool _hasLoadedOnce = false;
   int _ledgerPage = 1;
+  int _dataGeneration = 0;
   String? _errorKey;
   _FinancePeriod _period = _FinancePeriod.month;
   DateTimeRange? _customRange;
@@ -61,7 +64,7 @@ class _CourierFinancePageState extends State<CourierFinancePage>
     final wasActive = _tabActive;
     _tabActive = TickerMode.of(context);
 
-    if (!wasActive && _tabActive && !_requestInFlight) {
+    if (!wasActive && _tabActive) {
       unawaited(_load(silent: true));
     }
   }
@@ -102,19 +105,25 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   }
 
   Future<void> _load({bool silent = false}) async {
-    if (_requestInFlight) return;
+    if (_requestInFlight) {
+      _reloadRequested = true;
+      return;
+    }
+
     _requestInFlight = true;
+    final generation = _dataGeneration;
+    final range = _range;
+    final hadLoaded = _hasLoadedOnce;
 
     if (mounted) {
       setState(() {
-        _refreshing = silent;
-        if (!silent) _loading = true;
-        _errorKey = null;
+        _refreshing = silent && hadLoaded;
+        if (!silent && !hadLoaded) _loading = true;
+        if (!silent || !hadLoaded) _errorKey = null;
       });
     }
 
     try {
-      final range = _range;
       final summaryPath = Uri(
         path: '/couriers/me/finance/summary',
         queryParameters: range.toQuery(),
@@ -123,7 +132,7 @@ class _CourierFinancePageState extends State<CourierFinancePage>
         _client.get(summaryPath),
         _loadLedgerPage(range, 1),
       ]);
-      if (!mounted) return;
+      if (!mounted || generation != _dataGeneration) return;
 
       final ledgerPage = results[1] as _LedgerPage;
       setState(() {
@@ -131,18 +140,35 @@ class _CourierFinancePageState extends State<CourierFinancePage>
         _ledger = ledgerPage.items;
         _ledgerPage = 1;
         _hasMoreLedger = ledgerPage.hasMore;
+        _hasLoadedOnce = true;
+        _errorKey = null;
       });
     } on ApiException catch (error) {
-      if (mounted) setState(() => _errorKey = _errorFor(error));
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = _errorFor(error));
+      }
     } catch (_) {
-      if (mounted) setState(() => _errorKey = 'error.generic');
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = 'error.generic');
+      }
     } finally {
       _requestInFlight = false;
-      if (mounted) {
+
+      if (mounted && generation == _dataGeneration) {
         setState(() {
           _loading = false;
           _refreshing = false;
         });
+      }
+
+      final shouldReload = _reloadRequested;
+      _reloadRequested = false;
+      if (mounted && shouldReload) {
+        unawaited(_load(silent: _hasLoadedOnce));
       }
     }
   }
@@ -153,13 +179,15 @@ class _CourierFinancePageState extends State<CourierFinancePage>
     }
 
     _summaryPolling = true;
+    final generation = _dataGeneration;
+    final range = _range;
     try {
       final path = Uri(
         path: '/couriers/me/finance/summary',
-        queryParameters: _range.toQuery(),
+        queryParameters: range.toQuery(),
       ).toString();
       final raw = await _client.get(path);
-      if (!mounted) return;
+      if (!mounted || generation != _dataGeneration) return;
       final next = _FinanceSummary.fromJson(_asMap(raw));
       if (next != _summary) {
         setState(() => _summary = next);
@@ -204,25 +232,27 @@ class _CourierFinancePageState extends State<CourierFinancePage>
 
   Future<void> _loadMoreLedger() async {
     if (_loadingMore || !_hasMoreLedger || _requestInFlight) return;
+    final generation = _dataGeneration;
+    final range = _range;
+    final nextPageNumber = _ledgerPage + 1;
     setState(() => _loadingMore = true);
 
     try {
-      final nextPageNumber = _ledgerPage + 1;
-      final page = await _loadLedgerPage(_range, nextPageNumber);
-      if (!mounted) return;
+      final page = await _loadLedgerPage(range, nextPageNumber);
+      if (!mounted || generation != _dataGeneration) return;
       setState(() {
         _ledger = [..._ledger, ...page.items];
         _ledgerPage = nextPageNumber;
         _hasMoreLedger = page.hasMore;
       });
     } on ApiException catch (error) {
-      if (mounted) {
+      if (mounted && generation == _dataGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_locale.t(_errorFor(error)))),
         );
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted && generation == _dataGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_locale.t('error.generic'))),
         );
@@ -254,8 +284,13 @@ class _CourierFinancePageState extends State<CourierFinancePage>
       _customRange = picked;
     }
     if (!mounted) return;
-    setState(() => _period = period);
-    await _load();
+
+    _dataGeneration++;
+    setState(() {
+      _period = period;
+      _errorKey = null;
+    });
+    await _load(silent: _hasLoadedOnce);
   }
 
   String _errorFor(ApiException error) {
@@ -326,7 +361,7 @@ class _CourierFinancePageState extends State<CourierFinancePage>
 
   Widget _body() {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_errorKey != null) {
+    if (_errorKey != null && !_hasLoadedOnce) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -356,10 +391,6 @@ class _CourierFinancePageState extends State<CourierFinancePage>
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                if (_refreshing) ...[
-                  const LinearProgressIndicator(minHeight: 2),
-                  const SizedBox(height: 10),
-                ],
                 Row(
                   children: [
                     Expanded(
