@@ -23,7 +23,6 @@ class _CourierShellState extends State<CourierShell>
     with WidgetsBindingObserver {
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
-  late final List<Widget> _pages;
   late int _currentIndex;
   final Set<int> _visitedIndexes = <int>{};
 
@@ -37,12 +36,6 @@ class _CourierShellState extends State<CourierShell>
     _pushRegistration = PushRegistrationService(apiClient: _api);
     _currentIndex = widget.initialIndex.clamp(0, 3).toInt();
     _visitedIndexes.add(_currentIndex);
-    _pages = const <Widget>[
-      CourierHomePage(),
-      CourierOrdersPage(),
-      CourierFinancePage(),
-      CourierProfilePage(),
-    ];
     _locale.addListener(_localeChanged);
     unawaited(_startAuthenticatedSession());
   }
@@ -109,18 +102,28 @@ class _CourierShellState extends State<CourierShell>
 
   @override
   Widget build(BuildContext context) {
+    // Build fresh widget configurations so locale changes propagate through
+    // visited tabs. IndexedStack still preserves the child State objects by
+    // type/position, so scroll positions and loaded data remain intact.
+    const pages = <Widget>[
+      CourierHomePage(),
+      CourierOrdersPage(),
+      CourierFinancePage(),
+      CourierProfilePage(),
+    ];
+
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
         children: List<Widget>.generate(
-          _pages.length,
+          pages.length,
           (index) {
             if (!_visitedIndexes.contains(index)) {
               return const SizedBox.shrink();
             }
             return TickerMode(
               enabled: index == _currentIndex,
-              child: _pages[index],
+              child: pages[index],
             );
           },
           growable: false,
