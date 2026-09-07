@@ -23,7 +23,6 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   bool _foreground = true;
   bool _tabActive = true;
   bool _loading = true;
-  bool _refreshing = false;
   bool _requestInFlight = false;
   bool _reloadRequested = false;
   bool _summaryPolling = false;
@@ -117,7 +116,6 @@ class _CourierFinancePageState extends State<CourierFinancePage>
 
     if (mounted) {
       setState(() {
-        _refreshing = silent && hadLoaded;
         if (!silent && !hadLoaded) _loading = true;
         if (!silent || !hadLoaded) _errorKey = null;
       });
@@ -159,10 +157,7 @@ class _CourierFinancePageState extends State<CourierFinancePage>
       _requestInFlight = false;
 
       if (mounted && generation == _dataGeneration) {
-        setState(() {
-          _loading = false;
-          _refreshing = false;
-        });
+        setState(() => _loading = false);
       }
 
       final shouldReload = _reloadRequested;
