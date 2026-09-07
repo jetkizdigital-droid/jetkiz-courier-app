@@ -25,6 +25,7 @@ class _CourierShellState extends State<CourierShell>
   late final PushRegistrationService _pushRegistration;
   late final List<Widget> _pages;
   late int _currentIndex;
+  final Set<int> _visitedIndexes = <int>{};
 
   CourierLocaleController get _locale => CourierLocaleController.instance;
 
@@ -35,6 +36,7 @@ class _CourierShellState extends State<CourierShell>
     _api = ApiClient();
     _pushRegistration = PushRegistrationService(apiClient: _api);
     _currentIndex = widget.initialIndex.clamp(0, 3).toInt();
+    _visitedIndexes.add(_currentIndex);
     _pages = const <Widget>[
       CourierHomePage(),
       CourierOrdersPage(),
@@ -99,7 +101,10 @@ class _CourierShellState extends State<CourierShell>
   void _setTab(int index) {
     final next = index.clamp(0, 3).toInt();
     if (next == _currentIndex) return;
-    setState(() => _currentIndex = next);
+    setState(() {
+      _currentIndex = next;
+      _visitedIndexes.add(next);
+    });
   }
 
   @override
@@ -109,10 +114,15 @@ class _CourierShellState extends State<CourierShell>
         index: _currentIndex,
         children: List<Widget>.generate(
           _pages.length,
-          (index) => TickerMode(
-            enabled: index == _currentIndex,
-            child: _pages[index],
-          ),
+          (index) {
+            if (!_visitedIndexes.contains(index)) {
+              return const SizedBox.shrink();
+            }
+            return TickerMode(
+              enabled: index == _currentIndex,
+              child: _pages[index],
+            );
+          },
           growable: false,
         ),
       ),
