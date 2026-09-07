@@ -24,6 +24,7 @@ class _CourierShellState extends State<CourierShell>
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
   late int _currentIndex;
+  final Set<int> _visitedIndexes = <int>{};
 
   CourierLocaleController get _locale => CourierLocaleController.instance;
 
@@ -34,6 +35,7 @@ class _CourierShellState extends State<CourierShell>
     _api = ApiClient();
     _pushRegistration = PushRegistrationService(apiClient: _api);
     _currentIndex = widget.initialIndex.clamp(0, 3).toInt();
+    _visitedIndexes.add(_currentIndex);
     _locale.addListener(_localeChanged);
     unawaited(_startAuthenticatedSession());
   }
@@ -92,14 +94,18 @@ class _CourierShellState extends State<CourierShell>
   void _setTab(int index) {
     final next = index.clamp(0, 3).toInt();
     if (next == _currentIndex) return;
-    setState(() => _currentIndex = next);
+    setState(() {
+      _currentIndex = next;
+      _visitedIndexes.add(next);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Fresh widget instances make every preserved tab rebuild when the locale
-    // controller notifies the shell. IndexedStack still keeps each tab State.
-    final pages = <Widget>[
+    // Build fresh widget configurations so locale changes propagate through
+    // visited tabs. IndexedStack still preserves the child State objects by
+    // type/position, so scroll positions and loaded data remain intact.
+    const pages = <Widget>[
       CourierHomePage(),
       CourierOrdersPage(),
       CourierFinancePage(),
@@ -107,7 +113,22 @@ class _CourierShellState extends State<CourierShell>
     ];
 
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: pages),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: List<Widget>.generate(
+          pages.length,
+          (index) {
+            if (!_visitedIndexes.contains(index)) {
+              return const SizedBox.shrink();
+            }
+            return TickerMode(
+              enabled: index == _currentIndex,
+              child: pages[index],
+            );
+          },
+          growable: false,
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: _setTab,

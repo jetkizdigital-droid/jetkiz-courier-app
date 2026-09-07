@@ -21,8 +21,16 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   Timer? _pollTimer;
   StreamSubscription<CourierOrderEvent>? _orderEvents;
   bool _foreground = true;
+  bool _tabActive = true;
   bool _loading = true;
-  bool _refreshing = false;
+  bool _requestInFlight = false;
+  bool _reloadRequested = false;
+  bool _summaryPolling = false;
+  bool _loadingMore = false;
+  bool _hasMoreLedger = false;
+  bool _hasLoadedOnce = false;
+  int _ledgerPage = 1;
+  int _dataGeneration = 0;
   String? _errorKey;
   _FinancePeriod _period = _FinancePeriod.month;
   DateTimeRange? _customRange;
@@ -37,12 +45,27 @@ class _CourierFinancePageState extends State<CourierFinancePage>
     WidgetsBinding.instance.addObserver(this);
     _client = ApiClient();
     _orderEvents = CourierOrderEvents.stream.listen((event) {
-      if (_foreground) unawaited(_load(silent: true));
+      if (_foreground && _tabActive) {
+        unawaited(_load(silent: true));
+      }
     });
     unawaited(_load());
     _pollTimer = Timer.periodic(const Duration(seconds: 45), (_) {
-      if (_foreground) unawaited(_load(silent: true));
+      if (_foreground && _tabActive) {
+        unawaited(_pollSummary());
+      }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wasActive = _tabActive;
+    _tabActive = TickerMode.of(context);
+
+    if (!wasActive && _tabActive) {
+      unawaited(_load(silent: true));
+    }
   }
 
   @override
@@ -58,7 +81,9 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasForeground = _foreground;
     _foreground = state == AppLifecycleState.resumed;
-    if (!wasForeground && _foreground) unawaited(_load(silent: true));
+    if (!wasForeground && _foreground && _tabActive) {
+      unawaited(_load(silent: true));
+    }
   }
 
   AlmatyDateRange get _range {
@@ -79,74 +104,157 @@ class _CourierFinancePageState extends State<CourierFinancePage>
   }
 
   Future<void> _load({bool silent = false}) async {
-    if (_refreshing) return;
+    if (_requestInFlight) {
+      _reloadRequested = true;
+      return;
+    }
+
+    _requestInFlight = true;
+    final generation = _dataGeneration;
+    final range = _range;
+    final hadLoaded = _hasLoadedOnce;
+
     if (mounted) {
       setState(() {
-        _refreshing = silent;
-        if (!silent) _loading = true;
-        _errorKey = null;
+        if (!silent && !hadLoaded) _loading = true;
+        if (!silent || !hadLoaded) _errorKey = null;
       });
     }
 
     try {
-      final range = _range;
       final summaryPath = Uri(
         path: '/couriers/me/finance/summary',
         queryParameters: range.toQuery(),
       ).toString();
       final results = await Future.wait<dynamic>([
         _client.get(summaryPath),
-        _loadLedger(range),
+        _loadLedgerPage(range, 1),
       ]);
-      if (!mounted) return;
+      if (!mounted || generation != _dataGeneration) return;
+
+      final ledgerPage = results[1] as _LedgerPage;
       setState(() {
         _summary = _FinanceSummary.fromJson(_asMap(results[0]));
-        _ledger = results[1] as List<_LedgerItem>;
+        _ledger = ledgerPage.items;
+        _ledgerPage = 1;
+        _hasMoreLedger = ledgerPage.hasMore;
+        _hasLoadedOnce = true;
+        _errorKey = null;
       });
     } on ApiException catch (error) {
-      if (mounted) setState(() => _errorKey = _errorFor(error));
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = _errorFor(error));
+      }
     } catch (_) {
-      if (mounted) setState(() => _errorKey = 'error.generic');
+      if (mounted &&
+          generation == _dataGeneration &&
+          (!silent || !_hasLoadedOnce)) {
+        setState(() => _errorKey = 'error.generic');
+      }
     } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _refreshing = false;
-        });
+      _requestInFlight = false;
+
+      if (mounted && generation == _dataGeneration) {
+        setState(() => _loading = false);
+      }
+
+      final shouldReload = _reloadRequested;
+      _reloadRequested = false;
+      if (mounted && shouldReload) {
+        unawaited(_load(silent: _hasLoadedOnce));
       }
     }
   }
 
-  Future<List<_LedgerItem>> _loadLedger(AlmatyDateRange range) async {
-    final items = <_LedgerItem>[];
-    const pageSize = 100;
-    for (var page = 1; page <= 10; page++) {
+  Future<void> _pollSummary() async {
+    if (_summaryPolling || _requestInFlight || !_foreground || !_tabActive) {
+      return;
+    }
+
+    _summaryPolling = true;
+    final generation = _dataGeneration;
+    final range = _range;
+    try {
       final path = Uri(
-        path: '/couriers/me/finance/ledger',
-        queryParameters: {
-          ...range.toQuery(),
-          'page': '$page',
-          'limit': '$pageSize',
-        },
+        path: '/couriers/me/finance/summary',
+        queryParameters: range.toQuery(),
       ).toString();
       final raw = await _client.get(path);
-      final map = _asMap(raw);
-      final rows = map['items'] is List
-          ? map['items'] as List
-          : raw is List
-          ? raw
-          : const <dynamic>[];
-      items.addAll(
-        rows.whereType<Map>().map(
-          (row) => _LedgerItem.fromJson(Map<String, dynamic>.from(row)),
-        ),
-      );
-      final total = _int(map['total']);
-      if (rows.length < pageSize || (total != null && items.length >= total)) {
-        break;
+      if (!mounted || generation != _dataGeneration) return;
+      final next = _FinanceSummary.fromJson(_asMap(raw));
+      if (next != _summary) {
+        setState(() => _summary = next);
       }
+    } catch (_) {
+      // Summary polling is best effort. Manual refresh remains available.
+    } finally {
+      _summaryPolling = false;
     }
-    return items;
+  }
+
+  Future<_LedgerPage> _loadLedgerPage(
+    AlmatyDateRange range,
+    int page,
+  ) async {
+    const pageSize = 100;
+    final path = Uri(
+      path: '/couriers/me/finance/ledger',
+      queryParameters: {
+        ...range.toQuery(),
+        'page': '$page',
+        'limit': '$pageSize',
+      },
+    ).toString();
+    final raw = await _client.get(path);
+    final map = _asMap(raw);
+    final rows = map['items'] is List
+        ? map['items'] as List
+        : raw is List
+        ? raw
+        : const <dynamic>[];
+    final items = rows
+        .whereType<Map>()
+        .map((row) => _LedgerItem.fromJson(Map<String, dynamic>.from(row)))
+        .toList(growable: false);
+    final total = _int(map['total']);
+    final hasMore =
+        rows.length == pageSize &&
+        (total == null || page * pageSize < total);
+    return _LedgerPage(items: items, hasMore: hasMore);
+  }
+
+  Future<void> _loadMoreLedger() async {
+    if (_loadingMore || !_hasMoreLedger || _requestInFlight) return;
+    final generation = _dataGeneration;
+    final range = _range;
+    final nextPageNumber = _ledgerPage + 1;
+    setState(() => _loadingMore = true);
+
+    try {
+      final page = await _loadLedgerPage(range, nextPageNumber);
+      if (!mounted || generation != _dataGeneration) return;
+      setState(() {
+        _ledger = [..._ledger, ...page.items];
+        _ledgerPage = nextPageNumber;
+        _hasMoreLedger = page.hasMore;
+      });
+    } on ApiException catch (error) {
+      if (mounted && generation == _dataGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_locale.t(_errorFor(error)))),
+        );
+      }
+    } catch (_) {
+      if (mounted && generation == _dataGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_locale.t('error.generic'))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
   }
 
   Future<void> _selectPeriod(_FinancePeriod period) async {
@@ -171,8 +279,13 @@ class _CourierFinancePageState extends State<CourierFinancePage>
       _customRange = picked;
     }
     if (!mounted) return;
-    setState(() => _period = period);
-    await _load();
+
+    _dataGeneration++;
+    setState(() {
+      _period = period;
+      _errorKey = null;
+    });
+    await _load(silent: _hasLoadedOnce);
   }
 
   String _errorFor(ApiException error) {
@@ -243,7 +356,7 @@ class _CourierFinancePageState extends State<CourierFinancePage>
 
   Widget _body() {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_errorKey != null) {
+    if (_errorKey != null && !_hasLoadedOnce) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -266,71 +379,99 @@ class _CourierFinancePageState extends State<CourierFinancePage>
 
     return RefreshIndicator(
       onRefresh: () => _load(silent: true),
-      child: ListView(
+      child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
-        children: [
-          if (_refreshing) ...[
-            const LinearProgressIndicator(minHeight: 2),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: _Metric(
-                  label: _locale.t('finance.accrued'),
-                  value: '${_money(_summary.accrued)} ₸',
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: _locale.t('finance.accrued'),
+                        value: '${_money(_summary.accrued)} ₸',
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _Metric(
+                        label: _locale.t('finance.pending'),
+                        value: '${_money(_summary.pending)} ₸',
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _Metric(
-                  label: _locale.t('finance.pending'),
-                  value: '${_money(_summary.pending)} ₸',
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: _locale.t('finance.paid'),
+                        value: '${_money(_summary.paid)} ₸',
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _Metric(
+                        label: _locale.t('finance.delivered'),
+                        value: '${_summary.delivered}',
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 22),
+                Text(
+                  _locale.t('finance.history'),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_ledger.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 36),
+                    child: Text(
+                      _locale.t('finance.empty'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF667085)),
+                    ),
+                  ),
+              ]),
+            ),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _Metric(
-                  label: _locale.t('finance.paid'),
-                  value: '${_money(_summary.paid)} ₸',
+          if (_ledger.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList.builder(
+                itemCount: _ledger.length,
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _LedgerTile(entry: _ledger[index]),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _Metric(
-                  label: _locale.t('finance.delivered'),
-                  value: '${_summary.delivered}',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          Text(
-            _locale.t('finance.history'),
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          if (_ledger.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 36),
-              child: Text(
-                _locale.t('finance.empty'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF667085)),
-              ),
-            )
-          else
-            ..._ledger.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _LedgerTile(entry: entry),
               ),
             ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
+            sliver: SliverToBoxAdapter(
+              child: _hasMoreLedger
+                  ? OutlinedButton(
+                      onPressed: _loadingMore ? null : _loadMoreLedger,
+                      child: _loadingMore
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Text(
+                              _locale.isKazakh ? 'Тағы жүктеу' : 'Загрузить ещё',
+                            ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ),
         ],
       ),
     );
@@ -359,6 +500,25 @@ class _FinanceSummary {
       delivered: read('deliveredOrdersCount'),
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _FinanceSummary &&
+          accrued == other.accrued &&
+          pending == other.pending &&
+          paid == other.paid &&
+          delivered == other.delivered;
+
+  @override
+  int get hashCode => Object.hash(accrued, pending, paid, delivered);
+}
+
+class _LedgerPage {
+  const _LedgerPage({required this.items, required this.hasMore});
+
+  final List<_LedgerItem> items;
+  final bool hasMore;
 }
 
 class _LedgerItem {
