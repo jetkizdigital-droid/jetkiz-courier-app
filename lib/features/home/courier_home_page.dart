@@ -34,6 +34,7 @@ class _CourierHomePageState extends State<CourierHomePage>
   bool _tabActive = true;
   bool _loading = true;
   bool _refreshing = false;
+  bool _hasLoadedOnce = false;
   bool _changingOnline = false;
   bool _isOnline = false;
   String _name = '';
@@ -125,12 +126,14 @@ class _CourierHomePageState extends State<CourierHomePage>
       final online = _bool(me['isOnline']) || _bool(profile?['isOnline']);
 
       if (!mounted) return;
+      final firstSuccessfulLoad = !_hasLoadedOnce;
       final criticalChanged =
           _name != fullName ||
           _isOnline != online ||
           _activeOrderKey(_activeOrder) != _activeOrderKey(activeOrder) ||
           _errorKey != null ||
-          _loading;
+          _loading ||
+          firstSuccessfulLoad;
 
       if (criticalChanged) {
         setState(() {
@@ -141,6 +144,7 @@ class _CourierHomePageState extends State<CourierHomePage>
           _loading = false;
         });
       }
+      _hasLoadedOnce = true;
 
       // Location is operationally important, but starting/stopping the native
       // tracking service must not hold the first usable frame hostage.
@@ -171,14 +175,14 @@ class _CourierHomePageState extends State<CourierHomePage>
         // instead of turning an otherwise usable courier home into an error.
       }
     } on ApiException catch (error) {
-      if (mounted) {
+      if (mounted && (!silent || !_hasLoadedOnce)) {
         setState(() {
           _errorKey = _errorFor(error);
           _loading = false;
         });
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted && (!silent || !_hasLoadedOnce)) {
         setState(() {
           _errorKey = 'error.generic';
           _loading = false;
