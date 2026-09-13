@@ -277,6 +277,14 @@ class PushRegistrationService {
     if (firebaseMessaging == null) return null;
 
     try {
+      if (Platform.isIOS) {
+        final apnsReady = await _waitForApnsToken(firebaseMessaging);
+        if (!apnsReady) {
+          _log('APNs token unavailable; FCM token request deferred');
+          return null;
+        }
+      }
+
       final token = await firebaseMessaging.getToken();
       final normalized = token?.trim();
       return normalized == null || normalized.isEmpty ? null : normalized;
@@ -284,6 +292,21 @@ class PushRegistrationService {
       _log('FCM getToken failed: ${_safeError(error)}');
       return null;
     }
+  }
+
+  Future<bool> _waitForApnsToken(FirebaseMessaging firebaseMessaging) async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final token = await firebaseMessaging.getAPNSToken();
+      if (token != null && token.trim().isNotEmpty) {
+        return true;
+      }
+
+      if (attempt < 19) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+
+    return false;
   }
 
   /// Backend contract: POST /notification-devices/register
