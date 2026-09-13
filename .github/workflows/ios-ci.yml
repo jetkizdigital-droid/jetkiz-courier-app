@@ -72,6 +72,22 @@ jobs:
         shell: bash
         run: git diff -- ios || true
 
+      - name: Upload migrated iOS project snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-ios-migrated-project
+          path: |
+            pubspec.lock
+            ios/Flutter/AppFrameworkInfo.plist
+            ios/Flutter/Debug.xcconfig
+            ios/Flutter/Release.xcconfig
+            ios/Runner.xcodeproj/project.pbxproj
+            ios/Runner.xcworkspace/contents.xcworkspacedata
+            ios/Runner/AppDelegate.swift
+            ios/Runner/Info.plist
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Boot iPhone Simulator and launch app
         id: simulator
         shell: bash
