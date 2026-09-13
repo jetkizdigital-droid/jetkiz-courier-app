@@ -1,10 +1,10 @@
 name: Courier iOS CI
-# Public runner probe
 
 on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - ios/courier-initial-release
     paths:
       - 'lib/**'
@@ -13,14 +13,10 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/ios-ci.yml'
-  pull_request:
-    paths:
-      - 'lib/**'
-      - 'test/**'
-      - 'ios/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/ios-ci.yml'
+
+concurrency:
+  group: courier-ios-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ios-simulator:
@@ -29,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -40,12 +36,17 @@ jobs:
       - name: Environment
         shell: bash
         run: |
+          set -euo pipefail
           flutter --version
           xcodebuild -version
           xcrun simctl list runtimes
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Dependency drift diagnostic
+        shell: bash
+        run: git diff -- pubspec.lock || true
 
       - name: Analyze
         run: flutter analyze
@@ -65,4 +66,51 @@ jobs:
           test -f "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
-          echo 'Courier iOS simulator build verified'
+          echo 'Courier iOS simulator bundle verified'
+
+      - name: iOS project drift diagnostic
+        shell: bash
+        run: git diff -- ios || true
+
+      - name: Boot iPhone Simulator and launch app
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios-smoke
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[r for r in d["runtimes"] if r.get("isAvailable") and "iOS" in r.get("name","")]; a.sort(key=lambda r: tuple(int(x) for x in r.get("version","0").split("."))); print(a[-1]["identifier"])')
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; a=[d for d in json.load(sys.stdin)["devicetypes"] if d.get("name","").startswith("iPhone")]; pref=["iPhone 17 Pro","iPhone 17","iPhone 16 Pro","iPhone 16"]; by={d["name"]:d for d in a}; pick=next((by[n] for n in pref if n in by),a[-1]); print(pick["identifier"])')
+
+          UDID=$(xcrun simctl create "JETKIZ Courier CI" "$DEVICE_TYPE" "$RUNTIME")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/ios/iphonesimulator/Runner.app
+          xcrun simctl launch "$UDID" asia.jetkiz.courier | tee build/ios-smoke/launch.txt
+          sleep 8
+          xcrun simctl spawn "$UDID" launchctl list | grep -F 'asia.jetkiz.courier'
+          xcrun simctl io "$UDID" screenshot build/ios-smoke/courier-login.png
+          xcrun simctl spawn "$UDID" log show --style compact --last 2m --predicate 'process == "Runner"' > build/ios-smoke/runner.log || true
+          test -s build/ios-smoke/courier-login.png
+          echo 'JETKIZ Courier launched and remained alive in iPhone Simulator'
+
+      - name: Upload simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-ios-simulator-evidence
+          path: |
+            build/ios-smoke/courier-login.png
+            build/ios-smoke/launch.txt
+            build/ios-smoke/runner.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shutdown simulator
+        if: always() && steps.simulator.outputs.udid != ''
+        shell: bash
+        run: |
+          xcrun simctl shutdown "${{ steps.simulator.outputs.udid }}" || true
+          xcrun simctl delete "${{ steps.simulator.outputs.udid }}" || true
