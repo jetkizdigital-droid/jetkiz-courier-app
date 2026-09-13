@@ -1,0 +1,67 @@
+name: Courier iOS CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios/courier-initial-release
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/ios-ci.yml'
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/ios-ci.yml'
+
+jobs:
+  ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Environment
+        shell: bash
+        run: |
+          flutter --version
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build iPhone Simulator
+        run: flutter build ios --simulator --debug
+
+      - name: Verify iOS bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphonesimulator/Runner.app
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          echo 'Courier iOS simulator build verified'
