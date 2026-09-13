@@ -2,6 +2,8 @@ platform :ios, '15.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
+use_modular_headers!
+
 project 'Runner', {
   'Debug' => :debug,
   'Profile' => :release,
