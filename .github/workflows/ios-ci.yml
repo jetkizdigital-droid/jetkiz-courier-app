@@ -103,6 +103,36 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
           echo 'Courier iOS simulator bundle verified'
 
+      - name: Verify iOS production capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Debug.entitlements | grep -Fx 'development'
+          /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Release.entitlements | grep -Fx 'production'
+          grep -F 'CODE_SIGN_ENTITLEMENTS = Runner/Runner.Debug.entitlements;' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'CODE_SIGN_ENTITLEMENTS = Runner/Runner.Release.entitlements;' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'com.apple.Push' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'location'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'remote-notification'
+          echo 'APNs and background capabilities verified'
+
+      - name: Build unsigned iPhone release
+        run: flutter build ios --release --no-codesign
+
+      - name: Verify unsigned iPhone release
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          file "$APP/Runner" | grep -E 'arm64|Mach-O'
+          du -sh "$APP"
+          echo 'Unsigned release build for a physical iPhone verified'
+
       - name: iOS project drift diagnostic
         shell: bash
         run: git diff -- ios || true
