@@ -89,6 +89,19 @@ jobs:
           test "$(git hash-object "$DIR/Icon-App-1024x1024@1x.png")" != "dc9ada4725e9b0ddb1deab583e5b5102493aa332"
           echo "Branded iOS AppIcon set generated"
 
+      - name: Validate Firebase iOS configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLIST=ios/Runner/GoogleService-Info.plist
+          test -s "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$PLIST" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$PLIST" | grep -Fx 'jetkiz-mobile'
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' "$PLIST")"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :GCM_SENDER_ID' "$PLIST")"
+          grep -F 'GoogleService-Info.plist in Resources' ios/Runner.xcodeproj/project.pbxproj
+          echo 'Firebase iOS configuration verified'
+
       - name: Build iPhone Simulator
         run: flutter build ios --simulator --debug
 
@@ -101,6 +114,10 @@ jobs:
           test -f "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          test -s "$APP/GoogleService-Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'jetkiz-mobile'
+          echo 'Firebase plist is present in simulator app bundle'
           echo 'Courier iOS simulator bundle verified'
 
       - name: Verify iOS production capabilities
@@ -129,6 +146,10 @@ jobs:
           test -f "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          test -s "$APP/GoogleService-Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'jetkiz-mobile'
+          echo 'Firebase plist is present in physical iPhone app bundle'
           file "$APP/Runner" | grep -E 'arm64|Mach-O'
           du -sh "$APP"
           echo 'Unsigned release build for a physical iPhone verified'
@@ -175,6 +196,17 @@ jobs:
           xcrun simctl io "$UDID" screenshot build/ios-smoke/courier-login.png
           xcrun simctl spawn "$UDID" log show --style compact --last 2m --predicate 'process == "Runner"' > build/ios-smoke/runner.log || true
           test -s build/ios-smoke/courier-login.png
+          if grep -Fq 'Firebase initialization failed' build/ios-smoke/runner.log; then
+            echo 'Firebase bootstrap error detected in simulator log' >&2
+            grep -F 'Firebase initialization failed' build/ios-smoke/runner.log >&2 || true
+            exit 1
+          fi
+          if grep -Fq '[core/not-initialized]' build/ios-smoke/runner.log; then
+            echo 'Firebase core/not-initialized error detected in simulator log' >&2
+            grep -F '[core/not-initialized]' build/ios-smoke/runner.log >&2 || true
+            exit 1
+          fi
+          echo 'Firebase initialized without bootstrap errors'
           echo 'JETKIZ Courier launched and remained alive in iPhone Simulator'
 
       - name: Upload simulator evidence
