@@ -19,6 +19,9 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
+  static const bool _e2eDisablePush = bool.fromEnvironment(
+    'E2E_DISABLE_PUSH',
+  );
   final TokenStorage _tokenStorage = TokenStorage();
   final ApiClient _api = ApiClient();
 
@@ -98,6 +101,8 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _restorePushRegistrationBestEffort() async {
+    if (_e2eDisablePush) return;
+
     PushRegistrationService? push;
     try {
       if (!await CourierPushPreference.isEnabled()) return;
