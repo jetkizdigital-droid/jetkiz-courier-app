@@ -21,6 +21,9 @@ class CourierShell extends StatefulWidget {
 
 class _CourierShellState extends State<CourierShell>
     with WidgetsBindingObserver {
+  static const bool _e2eDisablePush = bool.fromEnvironment(
+    'E2E_DISABLE_PUSH',
+  );
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
   late int _currentIndex;
@@ -44,6 +47,8 @@ class _CourierShellState extends State<CourierShell>
     } catch (_) {
       // Local language remains available if settings sync is unavailable.
     }
+
+    if (_e2eDisablePush) return;
 
     try {
       if (!await CourierPushPreference.isEnabled()) {
