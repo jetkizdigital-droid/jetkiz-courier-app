@@ -1,0 +1,114 @@
+name: Courier iOS Auth E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: courier-ios-auth-e2e
+  cancel-in-progress: true
+
+jobs:
+  ios-auth-smoke:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    env:
+      E2E_COURIER_PHONE: ${{ secrets.E2E_COURIER_PHONE }}
+      E2E_COURIER_PASSWORD: ${{ secrets.E2E_COURIER_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate E2E credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${E2E_COURIER_PHONE:-}" ]; then
+            echo "::error::Missing repository secret E2E_COURIER_PHONE"
+            exit 1
+          fi
+          if [ -z "${E2E_COURIER_PASSWORD:-}" ]; then
+            echo "::error::Missing repository secret E2E_COURIER_PASSWORD"
+            exit 1
+          fi
+          echo "Courier E2E credentials are configured"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter --version
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Boot clean iPhone Simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios-auth-e2e
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[r for r in d["runtimes"] if r.get("isAvailable") and "iOS" in r.get("name","")]; a.sort(key=lambda r: tuple(int(x) for x in r.get("version","0").split("."))); print(a[-1]["identifier"])')
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; a=[d for d in json.load(sys.stdin)["devicetypes"] if d.get("name","").startswith("iPhone")]; pref=["iPhone 17 Pro","iPhone 17","iPhone 16 Pro","iPhone 16"]; by={d["name"]:d for d in a}; pick=next((by[n] for n in pref if n in by),a[-1]); print(pick["identifier"])')
+
+          UDID=$(xcrun simctl create "JETKIZ Courier Auth E2E" "$DEVICE_TYPE" "$RUNTIME")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          flutter devices
+
+      - name: Run production courier login smoke test
+        shell: bash
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -euo pipefail
+          flutter test integration_test/courier_ios_auth_smoke_test.dart             -d "$UDID"             --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia             --dart-define=E2E_DISABLE_PUSH=true             --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE"             --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
+
+      - name: Capture simulator evidence
+        if: always() && steps.simulator.outputs.udid != ''
+        shell: bash
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          mkdir -p build/ios-auth-e2e
+          xcrun simctl io "$UDID" screenshot build/ios-auth-e2e/final-screen.png || true
+          xcrun simctl spawn "$UDID" log show             --style compact             --last 10m             --predicate 'process == "Runner"'             > build/ios-auth-e2e/runner.log || true
+          test -s build/ios-auth-e2e/final-screen.png || true
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: courier-ios-auth-e2e-evidence
+          path: |
+            build/ios-auth-e2e/final-screen.png
+            build/ios-auth-e2e/runner.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shutdown simulator
+        if: always() && steps.simulator.outputs.udid != ''
+        shell: bash
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          xcrun simctl shutdown "$UDID" || true
+          xcrun simctl delete "$UDID" || true
