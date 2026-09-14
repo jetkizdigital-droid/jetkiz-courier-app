@@ -1,0 +1,282 @@
+name: Courier iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: App version shown to users
+        required: true
+        default: '1.0.3'
+        type: string
+      build_number:
+        description: Unique App Store build number
+        required: true
+        default: '5'
+        type: string
+      upload_to_testflight:
+        description: Upload the signed archive to App Store Connect
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: courier-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  signed-release:
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    env:
+      BUNDLE_ID: asia.jetkiz.courier
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_PRIVATE_KEY_B64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_B64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate Apple signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_TEAM_ID APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_PRIVATE_KEY_B64; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+          echo "Apple signing inputs are present"
+
+      - name: Prepare App Store Connect API key
+        id: apple-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY_DIR="$RUNNER_TEMP/apple-private-keys"
+          KEY_PATH="$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          mkdir -p "$KEY_DIR"
+          chmod 700 "$KEY_DIR"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_B64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          grep -Fq 'BEGIN PRIVATE KEY' "$KEY_PATH"
+          echo "path=$KEY_PATH" >> "$GITHUB_OUTPUT"
+          echo "App Store Connect key prepared"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ios
+          pod install
+
+      - name: Generate branded iOS app icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=assets/branding/jetkiz_app_icon_source.png
+          DIR=ios/Runner/Assets.xcassets/AppIcon.appiconset
+          test -s "$SRC"
+
+          while IFS=: read -r file size; do
+            sips -z "$size" "$size" "$SRC" --out "$DIR/$file" >/dev/null
+          done <<'EOF'
+          Icon-App-20x20@1x.png:20
+          Icon-App-20x20@2x.png:40
+          Icon-App-20x20@3x.png:60
+          Icon-App-29x29@1x.png:29
+          Icon-App-29x29@2x.png:58
+          Icon-App-29x29@3x.png:87
+          Icon-App-40x40@1x.png:40
+          Icon-App-40x40@2x.png:80
+          Icon-App-40x40@3x.png:120
+          Icon-App-60x60@2x.png:120
+          Icon-App-60x60@3x.png:180
+          Icon-App-76x76@1x.png:76
+          Icon-App-76x76@2x.png:152
+          Icon-App-83.5x83.5@2x.png:167
+          Icon-App-1024x1024@1x.png:1024
+          EOF
+
+          test -s "$DIR/Icon-App-1024x1024@1x.png"
+
+      - name: Validate production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ios/Runner/GoogleService-Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' ios/Runner/GoogleService-Info.plist | grep -Fx "$BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' ios/Runner/GoogleService-Info.plist | grep -Fx 'jetkiz-mobile'
+          /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Release.entitlements | grep -Fx 'production'
+          grep -F 'com.apple.Push' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
+          echo "Production configuration verified"
+
+      - name: Archive signed iPhone release
+        shell: bash
+        env:
+          ASC_KEY_PATH: ${{ steps.apple-key.outputs.path }}
+          BUILD_NAME: ${{ inputs.build_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/JETKIZ-Courier.xcarchive"
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+
+          xcodebuild             -workspace ios/Runner.xcworkspace             -scheme Runner             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID"             -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             FLUTTER_BUILD_NAME="$BUILD_NAME"             FLUTTER_BUILD_NUMBER="$BUILD_NUMBER"             archive
+
+      - name: Verify signed archive
+        shell: bash
+        env:
+          BUILD_NAME: ${{ inputs.build_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          APP="$ARCHIVE_PATH/Products/Applications/Runner.app"
+          test -d "$APP"
+          test -s "$APP/GoogleService-Info.plist"
+          test -s "$APP/embedded.mobileprovision"
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx "$BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" | grep -Fx "$BUILD_NAME"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" | grep -Fx "$BUILD_NUMBER"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          security cms -D -i "$APP/embedded.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          APP_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile.plist")
+          [[ "$APP_IDENTIFIER" == *".$BUNDLE_ID" ]]
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$RUNNER_TEMP/profile.plist" | grep -Fx 'production'
+
+          echo "Signed App Store archive verified"
+
+      - name: Create export options
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$EXPORT_OPTIONS" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+          echo "EXPORT_OPTIONS=$EXPORT_OPTIONS" >> "$GITHUB_ENV"
+
+      - name: Export signed IPA
+        shell: bash
+        env:
+          ASC_KEY_PATH: ${{ steps.apple-key.outputs.path }}
+        run: |
+          set -euo pipefail
+          EXPORT_PATH="$RUNNER_TEMP/export"
+          mkdir -p "$EXPORT_PATH"
+
+          xcodebuild             -exportArchive             -archivePath "$ARCHIVE_PATH"             -exportPath "$EXPORT_PATH"             -exportOptionsPlist "$EXPORT_OPTIONS"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID"             -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
+          IPA=$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)
+          test -n "$IPA"
+          test -s "$IPA"
+          echo "IPA_PATH=$IPA" >> "$GITHUB_ENV"
+          ls -lh "$IPA"
+
+      - name: Verify exported IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHECK_DIR="$RUNNER_TEMP/ipa-check"
+          mkdir -p "$CHECK_DIR"
+          unzip -q "$IPA_PATH" -d "$CHECK_DIR"
+          APP=$(find "$CHECK_DIR/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP"
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx "$BUNDLE_ID"
+          test -s "$APP/GoogleService-Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "Exported IPA verified"
+
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: jetkiz-courier-ios-signed-${{ inputs.build_name }}-${{ inputs.build_number }}
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload archive to App Store Connect
+        if: ${{ inputs.upload_to_testflight }}
+        shell: bash
+        env:
+          ASC_KEY_PATH: ${{ steps.apple-key.outputs.path }}
+        run: |
+          set -euo pipefail
+          UPLOAD_OPTIONS="$RUNNER_TEMP/UploadOptions.plist"
+          cat > "$UPLOAD_OPTIONS" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>upload</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
+          mkdir -p "$RUNNER_TEMP/upload"
+
+          xcodebuild             -exportArchive             -archivePath "$ARCHIVE_PATH"             -exportPath "$RUNNER_TEMP/upload"             -exportOptionsPlist "$UPLOAD_OPTIONS"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID"             -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
+          echo "Archive submitted to App Store Connect/TestFlight"
+
+      - name: Cleanup Apple private key
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/apple-private-keys"
