@@ -21,9 +21,7 @@ class CourierShell extends StatefulWidget {
 
 class _CourierShellState extends State<CourierShell>
     with WidgetsBindingObserver {
-  static const bool _e2eDisablePush = bool.fromEnvironment(
-    'E2E_DISABLE_PUSH',
-  );
+  static const bool _e2eDisablePush = bool.fromEnvironment('E2E_DISABLE_PUSH');
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
   late int _currentIndex;
