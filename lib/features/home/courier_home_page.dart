@@ -20,6 +20,9 @@ class CourierHomePage extends StatefulWidget {
 
 class _CourierHomePageState extends State<CourierHomePage>
     with WidgetsBindingObserver {
+  static const bool _e2eDisableLocation = bool.fromEnvironment(
+    'E2E_DISABLE_LOCATION',
+  );
   static const String _backgroundLocationDisclosureKey =
       'jetkiz.courier.background_location_disclosure.v1';
   static final Uri _privacyUri = Uri.parse('https://jetkiz.asia/privacy');
@@ -119,7 +122,7 @@ class _CourierHomePageState extends State<CourierHomePage>
         _earnings = metrics.earnings;
       });
 
-      if (online && !_location.isTracking) {
+      if (!_e2eDisableLocation && online && !_location.isTracking) {
         final tracking = await _location.startTracking();
         if (!tracking.started && mounted) _show(tracking.message);
       }
