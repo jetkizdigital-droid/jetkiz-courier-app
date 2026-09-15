@@ -64,6 +64,7 @@ jobs:
 
           echo "Official JETKIZ icon source:"
           sips -g pixelWidth -g pixelHeight -g hasAlpha "$SRC"
+          sips -g hasAlpha "$SRC" | grep -F 'hasAlpha: no'
 
           while IFS=: read -r file size; do
             sips -z "$size" "$size" "$SRC" --out "$DIR/$file" >/dev/null
@@ -132,7 +133,8 @@ jobs:
           grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
           /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'location'
           /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'remote-notification'
-          echo 'APNs and background capabilities verified'
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryUsageDescription' ios/Runner/Info.plist)"
+          echo 'APNs, background capabilities and privacy usage descriptions verified'
 
       - name: Build unsigned iPhone release
         run: flutter build ios --release --no-codesign
