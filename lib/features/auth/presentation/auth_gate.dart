@@ -19,9 +19,7 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
-  static const bool _e2eDisablePush = bool.fromEnvironment(
-    'E2E_DISABLE_PUSH',
-  );
+  static const bool _e2eDisablePush = bool.fromEnvironment('E2E_DISABLE_PUSH');
   final TokenStorage _tokenStorage = TokenStorage();
   final ApiClient _api = ApiClient();
 
