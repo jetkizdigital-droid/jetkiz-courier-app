@@ -65,14 +65,14 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           flutter devices
 
-      - name: Drive production courier login
+      - name: Run production courier login integration test
         timeout-minutes: 20
         shell: bash
         env:
           UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -euo pipefail
-          flutter drive --driver=test_driver/integration_test.dart --target=integration_test/courier_ios_auth_smoke_test.dart -d "$UDID" --no-pub --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia --dart-define=E2E_DISABLE_PUSH=true --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE" --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
+          flutter test integration_test/courier_ios_auth_smoke_test.dart -d "$UDID" --no-pub --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia --dart-define=E2E_DISABLE_PUSH=true --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE" --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
 
       - name: Capture simulator evidence
         if: always() && steps.simulator.outputs.udid != ''
