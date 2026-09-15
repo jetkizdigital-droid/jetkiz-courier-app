@@ -100,6 +100,7 @@ jobs:
           SRC=assets/branding/jetkiz_app_icon_source.png
           DIR=ios/Runner/Assets.xcassets/AppIcon.appiconset
           test -s "$SRC"
+          sips -g hasAlpha "$SRC" | grep -F 'hasAlpha: no'
 
           while IFS=: read -r file size; do
             sips -z "$size" "$size" "$SRC" --out "$DIR/$file" >/dev/null
@@ -133,6 +134,7 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Release.entitlements | grep -Fx 'production'
           grep -F 'com.apple.Push' ios/Runner.xcodeproj/project.pbxproj
           grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryUsageDescription' ios/Runner/Info.plist)"
           echo "Production configuration verified"
 
       - name: Archive signed iPhone release
