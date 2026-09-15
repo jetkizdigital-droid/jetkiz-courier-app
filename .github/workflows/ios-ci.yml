@@ -58,12 +58,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=assets/branding/jetkiz_app_icon_source.png
+          BRAND_SRC=assets/branding/jetkiz_app_icon_source.png
+          SRC="$RUNNER_TEMP/jetkiz-ios-app-icon.png"
           DIR=ios/Runner/Assets.xcassets/AppIcon.appiconset
-          test -s "$SRC"
+          test -s "$BRAND_SRC"
+          swift tool/prepare_ios_app_icon.swift "$BRAND_SRC" "$SRC"
 
-          echo "Official JETKIZ icon source:"
+          echo "Prepared JETKIZ iOS icon source:"
           sips -g pixelWidth -g pixelHeight -g hasAlpha "$SRC"
+          sips -g pixelWidth "$SRC" | grep -F 'pixelWidth: 1024'
+          sips -g pixelHeight "$SRC" | grep -F 'pixelHeight: 1024'
           sips -g hasAlpha "$SRC" | grep -F 'hasAlpha: no'
 
           while IFS=: read -r file size; do
