@@ -30,6 +30,8 @@
 	<string>JETKIZ использует геопозицию во время смены, даже когда приложение свернуто.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>JETKIZ использует геопозицию для назначения и выполнения доставок.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>JETKIZ использует медиатеку, чтобы курьер мог выбрать фотографию профиля.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
