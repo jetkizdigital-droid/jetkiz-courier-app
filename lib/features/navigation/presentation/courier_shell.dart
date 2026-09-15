@@ -21,6 +21,7 @@ class CourierShell extends StatefulWidget {
 
 class _CourierShellState extends State<CourierShell>
     with WidgetsBindingObserver {
+  static const bool _e2eDisablePush = bool.fromEnvironment('E2E_DISABLE_PUSH');
   late final ApiClient _api;
   late final PushRegistrationService _pushRegistration;
   late int _currentIndex;
@@ -44,6 +45,8 @@ class _CourierShellState extends State<CourierShell>
     } catch (_) {
       // Local language remains available if settings sync is unavailable.
     }
+
+    if (_e2eDisablePush) return;
 
     try {
       if (!await CourierPushPreference.isEnabled()) {
@@ -109,25 +112,30 @@ class _CourierShellState extends State<CourierShell>
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: NavigationBar(
+        key: const Key('e2e.shell.navigation'),
         selectedIndex: _currentIndex,
         onDestinationSelected: _setTab,
         destinations: [
           NavigationDestination(
+            key: const Key('e2e.nav.home'),
             icon: const Icon(Icons.home_outlined),
             selectedIcon: const Icon(Icons.home_rounded),
             label: _locale.t('nav.home'),
           ),
           NavigationDestination(
+            key: const Key('e2e.nav.orders'),
             icon: const Icon(Icons.receipt_long_outlined),
             selectedIcon: const Icon(Icons.receipt_long_rounded),
             label: _locale.t('nav.orders'),
           ),
           NavigationDestination(
+            key: const Key('e2e.nav.finance'),
             icon: const Icon(Icons.account_balance_wallet_outlined),
             selectedIcon: const Icon(Icons.account_balance_wallet_rounded),
             label: _locale.t('nav.finance'),
           ),
           NavigationDestination(
+            key: const Key('e2e.nav.profile'),
             icon: const Icon(Icons.person_outline_rounded),
             selectedIcon: const Icon(Icons.person_rounded),
             label: _locale.t('nav.profile'),
