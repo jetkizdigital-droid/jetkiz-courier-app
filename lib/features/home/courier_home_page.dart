@@ -21,7 +21,7 @@ class CourierHomePage extends StatefulWidget {
 class _CourierHomePageState extends State<CourierHomePage>
     with WidgetsBindingObserver {
   static const bool _e2eDisableLocation = bool.fromEnvironment(
-    'E2E_DISABLE_LOCATION',
+    'E2E_DISABLE_PUSH',
   );
   static const String _backgroundLocationDisclosureKey =
       'jetkiz.courier.background_location_disclosure.v1';
