@@ -6,10 +6,7 @@ import 'package:jetkiz_courier_app/features/auth/data/auth_repository.dart';
 import 'package:jetkiz_courier_app/features/auth/domain/auth_usecase.dart';
 
 class CourierAuthSmokeResult {
-  const CourierAuthSmokeResult({
-    required this.success,
-    required this.message,
-  });
+  const CourierAuthSmokeResult({required this.success, required this.message});
 
   final bool success;
   final String message;
