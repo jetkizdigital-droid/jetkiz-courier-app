@@ -216,6 +216,7 @@ class _CourierLoginPageState extends State<CourierLoginPage> {
                         ),
                         Expanded(
                           child: TextField(
+                            key: const Key('e2e.login.phone'),
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
@@ -236,6 +237,7 @@ class _CourierLoginPageState extends State<CourierLoginPage> {
                   ),
                   const SizedBox(height: 14),
                   TextField(
+                    key: const Key('e2e.login.password'),
                     controller: _passwordController,
                     obscureText: _obscure,
                     autocorrect: false,
@@ -266,6 +268,7 @@ class _CourierLoginPageState extends State<CourierLoginPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Checkbox(
+                        key: const Key('e2e.login.accept'),
                         value: _accepted,
                         activeColor: green,
                         onChanged: (value) {
@@ -305,6 +308,7 @@ class _CourierLoginPageState extends State<CourierLoginPage> {
                   SizedBox(
                     height: 56,
                     child: FilledButton(
+                      key: const Key('e2e.login.submit'),
                       onPressed: _canSubmit ? _submit : null,
                       child: _controller.isLoading
                           ? const SizedBox(
