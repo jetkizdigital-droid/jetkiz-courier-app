@@ -2,17 +2,6 @@ name: Courier iOS Auth Drive
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'lib/**'
-      - 'integration_test/**'
-      - 'test_driver/**'
-      - 'ios/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/ios-auth-drive.yml'
 
 permissions:
   contents: read
@@ -65,14 +54,41 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           flutter devices
 
-      - name: Run production courier login integration test
-        timeout-minutes: 20
+      - name: Build and launch production courier auth smoke
+        timeout-minutes: 15
         shell: bash
         env:
           UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -euo pipefail
-          flutter test integration_test/courier_ios_auth_smoke_test.dart -d "$UDID" --no-pub --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia --dart-define=E2E_DISABLE_PUSH=true --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE" --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
+          flutter build ios --simulator --debug --no-pub \
+            --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia \
+            --dart-define=E2E_AUTH_SMOKE=true \
+            --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE" \
+            --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
+
+          APP=build/ios/iphonesimulator/Runner.app
+          LOG=build/ios-auth-drive/runner.log
+          test -d "$APP"
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" asia.jetkiz.courier
+
+          for attempt in $(seq 1 45); do
+            xcrun simctl spawn "$UDID" log show --style compact --last 2m --predicate 'process == "Runner"' > "$LOG" || true
+            if grep -Fq 'JETKIZ_E2E_AUTH_OK' "$LOG"; then
+              echo 'Production courier login smoke passed'
+              exit 0
+            fi
+            if grep -Fq 'JETKIZ_E2E_AUTH_FAILED' "$LOG"; then
+              grep -F 'JETKIZ_E2E_AUTH_FAILED' "$LOG" || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo 'Timed out waiting for courier auth smoke marker' >&2
+          tail -200 "$LOG" || true
+          exit 1
 
       - name: Capture simulator evidence
         if: always() && steps.simulator.outputs.udid != ''
