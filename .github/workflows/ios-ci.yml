@@ -165,13 +165,14 @@ jobs:
         run: |
           set -euo pipefail
           APP=build/ios/iphoneos/Runner.app
-          mapfile -t PRIVACY_MANIFESTS < <(find "$APP" -name PrivacyInfo.xcprivacy -type f -print)
-          printf '%s\n' "${PRIVACY_MANIFESTS[@]}"
-          if [ "${#PRIVACY_MANIFESTS[@]}" -eq 0 ]; then
+          PRIVACY_MANIFESTS="$(find "$APP" -name PrivacyInfo.xcprivacy -type f -print)"
+          printf '%s\n' "$PRIVACY_MANIFESTS"
+          PRIVACY_MANIFEST_COUNT="$(printf '%s\n' "$PRIVACY_MANIFESTS" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$PRIVACY_MANIFEST_COUNT" -eq 0 ]; then
             echo '::error::No PrivacyInfo.xcprivacy was packaged in the iPhone release'
             exit 1
           fi
-          echo "Packaged privacy manifests: ${#PRIVACY_MANIFESTS[@]}"
+          echo "Packaged privacy manifests: $PRIVACY_MANIFEST_COUNT"
 
       - name: iOS project drift diagnostic
         shell: bash
