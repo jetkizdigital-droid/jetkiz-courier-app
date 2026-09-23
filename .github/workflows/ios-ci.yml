@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BRAND_SRC=assets/branding/jetkiz_app_icon_source.png
+          BRAND_SRC=assets/branding/jetkiz_app_icon.svg
           SRC="$RUNNER_TEMP/jetkiz-ios-app-icon.png"
           DIR=ios/Runner/Assets.xcassets/AppIcon.appiconset
           test -s "$BRAND_SRC"
