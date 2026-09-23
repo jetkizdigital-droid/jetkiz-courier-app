@@ -37,6 +37,8 @@ jobs:
       APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       APP_STORE_CONNECT_PRIVATE_KEY_B64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_B64 }}
+      E2E_COURIER_PHONE: ${{ secrets.E2E_COURIER_PHONE }}
+      E2E_COURIER_PASSWORD: ${{ secrets.E2E_COURIER_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -53,6 +55,18 @@ jobs:
             fi
           done
           echo "Apple signing inputs are present"
+
+      - name: Validate production auth secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in E2E_COURIER_PHONE E2E_COURIER_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing GitHub Actions secret required for production Courier auth gate: $name"
+              exit 1
+            fi
+          done
+          echo "Courier production auth inputs are present"
 
       - name: Prepare App Store Connect API key
         id: apple-key
@@ -100,6 +114,54 @@ jobs:
 
       - name: Preflight tests
         run: flutter test
+
+      - name: Production Courier auth release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/testflight-auth
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[r for r in d["runtimes"] if r.get("isAvailable") and "iOS" in r.get("name","")]; a.sort(key=lambda r: tuple(int(x) for x in r.get("version","0").split("."))); print(a[-1]["identifier"])')
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; a=[d for d in json.load(sys.stdin)["devicetypes"] if d.get("name","").startswith("iPhone")]; pref=["iPhone 17 Pro","iPhone 17","iPhone 16 Pro","iPhone 16"]; by={d["name"]:d for d in a}; pick=next((by[n] for n in pref if n in by),a[-1]); print(pick["identifier"])')
+          UDID=$(xcrun simctl create "JETKIZ Courier TestFlight Auth" "$DEVICE_TYPE" "$RUNTIME")
+
+          cleanup() {
+            xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
+            xcrun simctl delete "$UDID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+          flutter build ios --simulator --debug --no-pub \
+            --dart-define=JETKIZ_API_BASE_URL=https://api.jetkiz.asia \
+            --dart-define=E2E_AUTH_SMOKE=true \
+            --dart-define=E2E_COURIER_PHONE="$E2E_COURIER_PHONE" \
+            --dart-define=E2E_COURIER_PASSWORD="$E2E_COURIER_PASSWORD"
+
+          APP=build/ios/iphonesimulator/Runner.app
+          LOG=build/testflight-auth/courier-auth.log
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" asia.jetkiz.courier
+
+          for attempt in $(seq 1 60); do
+            xcrun simctl spawn "$UDID" log show --style compact --last 2m --predicate 'process == "Runner"' > "$LOG" || true
+            if grep -Fq 'JETKIZ_E2E_AUTH_OK' "$LOG"; then
+              echo 'Production Courier login release gate passed'
+              break
+            fi
+            if grep -Fq 'JETKIZ_E2E_AUTH_FAILED' "$LOG"; then
+              grep -F 'JETKIZ_E2E_AUTH_FAILED' "$LOG" || true
+              exit 1
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo '::error::Timed out waiting for production Courier auth result'
+              tail -n 200 "$LOG" || true
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Install CocoaPods dependencies
         shell: bash
