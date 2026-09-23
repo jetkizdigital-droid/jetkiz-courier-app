@@ -1,0 +1,250 @@
+name: Courier iOS CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - ios/courier-initial-release
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/ios-ci.yml'
+
+concurrency:
+  group: courier-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-simulator:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter --version
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Dependency drift diagnostic
+        shell: bash
+        run: git diff -- pubspec.lock || true
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Generate branded iOS app icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRAND_SRC=assets/branding/jetkiz_app_icon.svg
+          SRC="$RUNNER_TEMP/jetkiz-ios-app-icon.png"
+          DIR=ios/Runner/Assets.xcassets/AppIcon.appiconset
+          test -s "$BRAND_SRC"
+          swift tool/prepare_ios_app_icon.swift "$BRAND_SRC" "$SRC"
+
+          echo "Prepared JETKIZ iOS icon source:"
+          sips -g pixelWidth -g pixelHeight -g hasAlpha "$SRC"
+          sips -g pixelWidth "$SRC" | grep -F 'pixelWidth: 1024'
+          sips -g pixelHeight "$SRC" | grep -F 'pixelHeight: 1024'
+          sips -g hasAlpha "$SRC" | grep -F 'hasAlpha: no'
+
+          while IFS=: read -r file size; do
+            sips -z "$size" "$size" "$SRC" --out "$DIR/$file" >/dev/null
+          done <<'EOF'
+          Icon-App-20x20@1x.png:20
+          Icon-App-20x20@2x.png:40
+          Icon-App-20x20@3x.png:60
+          Icon-App-29x29@1x.png:29
+          Icon-App-29x29@2x.png:58
+          Icon-App-29x29@3x.png:87
+          Icon-App-40x40@1x.png:40
+          Icon-App-40x40@2x.png:80
+          Icon-App-40x40@3x.png:120
+          Icon-App-60x60@2x.png:120
+          Icon-App-60x60@3x.png:180
+          Icon-App-76x76@1x.png:76
+          Icon-App-76x76@2x.png:152
+          Icon-App-83.5x83.5@2x.png:167
+          Icon-App-1024x1024@1x.png:1024
+          EOF
+
+          test -s "$DIR/Icon-App-1024x1024@1x.png"
+          test "$(git hash-object "$DIR/Icon-App-1024x1024@1x.png")" != "dc9ada4725e9b0ddb1deab583e5b5102493aa332"
+          echo "Branded iOS AppIcon set generated"
+
+      - name: Validate Firebase iOS configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLIST=ios/Runner/GoogleService-Info.plist
+          test -s "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$PLIST" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$PLIST" | grep -Fx 'jetkiz-mobile'
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' "$PLIST")"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :GCM_SENDER_ID' "$PLIST")"
+          grep -F 'GoogleService-Info.plist in Resources' ios/Runner.xcodeproj/project.pbxproj
+          echo 'Firebase iOS configuration verified'
+
+      - name: Build iPhone Simulator
+        run: flutter build ios --simulator --debug
+
+      - name: Verify iOS bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphonesimulator/Runner.app
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          test -s "$APP/courier_order.wav"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          test -s "$APP/GoogleService-Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'jetkiz-mobile'
+          echo 'Firebase plist is present in simulator app bundle'
+          echo 'Courier iOS simulator bundle verified'
+
+      - name: Verify iOS production capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Debug.entitlements | grep -Fx 'development'
+          /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Release.entitlements | grep -Fx 'production'
+          grep -F 'CODE_SIGN_ENTITLEMENTS = Runner/Runner.Debug.entitlements;' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'CODE_SIGN_ENTITLEMENTS = Runner/Runner.Release.entitlements;' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'com.apple.Push' ios/Runner.xcodeproj/project.pbxproj
+          grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'location'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'remote-notification'
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryUsageDescription' ios/Runner/Info.plist)"
+          echo 'APNs, background capabilities and privacy usage descriptions verified'
+
+      - name: Build unsigned iPhone release
+        run: flutter build ios --release --no-codesign
+
+      - name: Verify unsigned iPhone release
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
+          test -s "$APP/GoogleService-Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'asia.jetkiz.courier'
+          /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist" | grep -Fx 'jetkiz-mobile'
+          echo 'Firebase plist is present in physical iPhone app bundle'
+          file "$APP/Runner" | grep -E 'arm64|Mach-O'
+          du -sh "$APP"
+          echo 'Unsigned release build for a physical iPhone verified'
+
+      - name: Verify packaged privacy manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          PRIVACY_MANIFESTS="$(find "$APP" -name PrivacyInfo.xcprivacy -type f -print)"
+          printf '%s\n' "$PRIVACY_MANIFESTS"
+          PRIVACY_MANIFEST_COUNT="$(printf '%s\n' "$PRIVACY_MANIFESTS" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$PRIVACY_MANIFEST_COUNT" -eq 0 ]; then
+            echo '::error::No PrivacyInfo.xcprivacy was packaged in the iPhone release'
+            exit 1
+          fi
+          echo "Packaged privacy manifests: $PRIVACY_MANIFEST_COUNT"
+
+      - name: iOS project drift diagnostic
+        shell: bash
+        run: git diff -- ios || true
+
+      - name: Upload migrated iOS project snapshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: courier-ios-migrated-project
+          path: |
+            pubspec.lock
+            ios/Flutter/AppFrameworkInfo.plist
+            ios/Flutter/Debug.xcconfig
+            ios/Flutter/Release.xcconfig
+            ios/Runner.xcodeproj/project.pbxproj
+            ios/Runner.xcworkspace/contents.xcworkspacedata
+            ios/Runner/AppDelegate.swift
+            ios/Runner/Info.plist
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Boot iPhone Simulator and launch app
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios-smoke
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[r for r in d["runtimes"] if r.get("isAvailable") and "iOS" in r.get("name","")]; a.sort(key=lambda r: tuple(int(x) for x in r.get("version","0").split("."))); print(a[-1]["identifier"])')
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; a=[d for d in json.load(sys.stdin)["devicetypes"] if d.get("name","").startswith("iPhone")]; pref=["iPhone 17 Pro","iPhone 17","iPhone 16 Pro","iPhone 16"]; by={d["name"]:d for d in a}; pick=next((by[n] for n in pref if n in by),a[-1]); print(pick["identifier"])')
+
+          UDID=$(xcrun simctl create "JETKIZ Courier CI" "$DEVICE_TYPE" "$RUNTIME")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/ios/iphonesimulator/Runner.app
+          xcrun simctl launch "$UDID" asia.jetkiz.courier | tee build/ios-smoke/launch.txt
+          sleep 8
+          xcrun simctl spawn "$UDID" launchctl list | grep -F 'asia.jetkiz.courier'
+          xcrun simctl io "$UDID" screenshot build/ios-smoke/courier-login.png
+          xcrun simctl spawn "$UDID" log show --style compact --last 2m --predicate 'process == "Runner"' > build/ios-smoke/runner.log || true
+          test -s build/ios-smoke/courier-login.png
+          if grep -Fq 'Firebase initialization failed' build/ios-smoke/runner.log; then
+            echo 'Firebase bootstrap error detected in simulator log' >&2
+            grep -F 'Firebase initialization failed' build/ios-smoke/runner.log >&2 || true
+            exit 1
+          fi
+          if grep -Fq '[core/not-initialized]' build/ios-smoke/runner.log; then
+            echo 'Firebase core/not-initialized error detected in simulator log' >&2
+            grep -F '[core/not-initialized]' build/ios-smoke/runner.log >&2 || true
+            exit 1
+          fi
+          echo 'Firebase initialized without bootstrap errors'
+          echo 'JETKIZ Courier launched and remained alive in iPhone Simulator'
+
+      - name: Upload simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: courier-ios-simulator-evidence
+          path: |
+            build/ios-smoke/courier-login.png
+            build/ios-smoke/launch.txt
+            build/ios-smoke/runner.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shutdown simulator
+        if: always() && steps.simulator.outputs.udid != ''
+        shell: bash
+        run: |
+          xcrun simctl shutdown "${{ steps.simulator.outputs.udid }}" || true
+          xcrun simctl delete "${{ steps.simulator.outputs.udid }}" || true
