@@ -63,7 +63,16 @@ jobs:
           KEY_PATH="$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
           mkdir -p "$KEY_DIR"
           chmod 700 "$KEY_DIR"
-          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_B64" | base64 --decode > "$KEY_PATH"
+          python3 - "$KEY_PATH" <<'PY'
+          import base64
+          import os
+          import pathlib
+          import sys
+
+          key_path = pathlib.Path(sys.argv[1])
+          encoded = os.environ["APP_STORE_CONNECT_PRIVATE_KEY_B64"].strip()
+          key_path.write_bytes(base64.b64decode(encoded, validate=True))
+          PY
           chmod 600 "$KEY_PATH"
           grep -Fq 'BEGIN PRIVATE KEY' "$KEY_PATH"
           echo "path=$KEY_PATH" >> "$GITHUB_OUTPUT"
