@@ -106,6 +106,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           presentAlert: true,
           presentBadge: true,
           presentSound: true,
+          sound: 'courier_order.wav',
         ),
       ),
       payload: jsonEncode(data),
@@ -342,6 +343,7 @@ class PushMessageService {
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      sound: channelId == courierOrdersChannelId ? 'courier_order.wav' : null,
     );
 
     await _localNotifications.show(

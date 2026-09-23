@@ -12,6 +12,7 @@ import 'package:jetkiz_courier_app/core/localization/courier_locale.dart';
 import 'package:jetkiz_courier_app/core/location/courier_location_service.dart';
 import 'package:jetkiz_courier_app/core/network/apiClient.dart';
 import 'package:jetkiz_courier_app/core/push/push_message_service.dart';
+import 'package:jetkiz_courier_app/core/testing/courier_auth_smoke.dart';
 import 'package:jetkiz_courier_app/features/auth/presentation/auth_gate.dart';
 import 'package:jetkiz_courier_app/features/navigation/presentation/courier_shell.dart';
 import 'package:jetkiz_courier_app/features/notifications/presentation/courier_notifications_page.dart';
@@ -27,6 +28,12 @@ bool _routingToAuthGate = false;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await CourierLocaleController.instance.load();
+
+  final authSmoke = await runCourierAuthSmokeIfRequested();
+  if (authSmoke != null) {
+    runApp(_CourierAuthSmokeApp(result: authSmoke));
+    return;
+  }
 
   var firebaseAvailable = false;
   try {
@@ -133,6 +140,27 @@ void _openPendingPushIfReady() {
   navigator.push(
     MaterialPageRoute(builder: (_) => const CourierNotificationsPage()),
   );
+}
+
+class _CourierAuthSmokeApp extends StatelessWidget {
+  const _CourierAuthSmokeApp({required this.result});
+
+  final CourierAuthSmokeResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Text(
+            result.success ? 'JETKIZ_E2E_AUTH_OK' : 'JETKIZ_E2E_AUTH_FAILED',
+            textDirection: TextDirection.ltr,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class MyApp extends StatefulWidget {
