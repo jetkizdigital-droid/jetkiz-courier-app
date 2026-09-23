@@ -70,7 +70,7 @@ jobs:
           import sys
 
           key_path = pathlib.Path(sys.argv[1])
-          encoded = os.environ["APP_STORE_CONNECT_PRIVATE_KEY_B64"].strip()
+          encoded = "".join(os.environ["APP_STORE_CONNECT_PRIVATE_KEY_B64"].split())
           key_path.write_bytes(base64.b64decode(encoded, validate=True))
           PY
           chmod 600 "$KEY_PATH"
