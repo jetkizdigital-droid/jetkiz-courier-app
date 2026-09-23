@@ -160,6 +160,19 @@ jobs:
           du -sh "$APP"
           echo 'Unsigned release build for a physical iPhone verified'
 
+      - name: Verify packaged privacy manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          mapfile -t PRIVACY_MANIFESTS < <(find "$APP" -name PrivacyInfo.xcprivacy -type f -print)
+          printf '%s\n' "${PRIVACY_MANIFESTS[@]}"
+          if [ "${#PRIVACY_MANIFESTS[@]}" -eq 0 ]; then
+            echo '::error::No PrivacyInfo.xcprivacy was packaged in the iPhone release'
+            exit 1
+          fi
+          echo "Packaged privacy manifests: ${#PRIVACY_MANIFESTS[@]}"
+
       - name: iOS project drift diagnostic
         shell: bash
         run: git diff -- ios || true
