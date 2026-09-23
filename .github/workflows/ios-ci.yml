@@ -117,6 +117,7 @@ jobs:
           APP=build/ios/iphonesimulator/Runner.app
           test -d "$APP"
           test -f "$APP/Info.plist"
+          test -s "$APP/courier_order.wav"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx 'asia.jetkiz.courier'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist" | grep -Fx 'JETKIZ Курьер'
           test -s "$APP/GoogleService-Info.plist"
