@@ -86,6 +86,12 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Preflight analyze
+        run: flutter analyze
+
+      - name: Preflight tests
+        run: flutter test
+
       - name: Install CocoaPods dependencies
         shell: bash
         run: |
@@ -133,11 +139,16 @@ jobs:
         run: |
           set -euo pipefail
           test -s ios/Runner/GoogleService-Info.plist
+          test -s ios/Runner/courier_order.wav
           /usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' ios/Runner/GoogleService-Info.plist | grep -Fx "$BUNDLE_ID"
           /usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' ios/Runner/GoogleService-Info.plist | grep -Fx 'jetkiz-mobile'
           /usr/libexec/PlistBuddy -c 'Print :aps-environment' ios/Runner/Runner.Release.entitlements | grep -Fx 'production'
           grep -F 'com.apple.Push' ios/Runner.xcodeproj/project.pbxproj
           grep -F 'com.apple.BackgroundModes' ios/Runner.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'location'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' ios/Runner/Info.plist | grep -F 'remote-notification'
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSLocationWhenInUseUsageDescription' ios/Runner/Info.plist)"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSLocationAlwaysAndWhenInUseUsageDescription' ios/Runner/Info.plist)"
           test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryUsageDescription' ios/Runner/Info.plist)"
           echo "Production configuration verified"
 
@@ -164,7 +175,9 @@ jobs:
           APP="$ARCHIVE_PATH/Products/Applications/Runner.app"
           test -d "$APP"
           test -s "$APP/GoogleService-Info.plist"
+          test -s "$APP/courier_order.wav"
           test -s "$APP/embedded.mobileprovision"
+          test -n "$(find "$APP" -name PrivacyInfo.xcprivacy -type f -print -quit)"
 
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx "$BUNDLE_ID"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" | grep -Fx "$BUILD_NAME"
@@ -235,6 +248,8 @@ jobs:
 
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" | grep -Fx "$BUNDLE_ID"
           test -s "$APP/GoogleService-Info.plist"
+          test -s "$APP/courier_order.wav"
+          test -n "$(find "$APP" -name PrivacyInfo.xcprivacy -type f -print -quit)"
           codesign --verify --deep --strict --verbose=2 "$APP"
           echo "Exported IPA verified"
 
