@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - ios/courier-initial-release
+      - ios/courier-appstore-final-20260926
     paths:
       - 'lib/**'
       - 'test/**'
